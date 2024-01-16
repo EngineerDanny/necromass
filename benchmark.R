@@ -1,4 +1,5 @@
 library(data.table)
+
 bfcpt <- fread("bacteria_fungi_conservative_power_transformed.csv")
 meta.dt <- fread("bacteria_conservative_r_same.csv")[
   order(Necrobag_ID)
@@ -31,7 +32,7 @@ for(out.i in 1:ncol(bfcpt)){
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
-if(FALSE){
+if(T){
   future::plan(
     future.batchtools::batchtools_slurm,
     template="~/slurm-future.tmpl",
