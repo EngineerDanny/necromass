@@ -32,7 +32,7 @@ for(out.i in 1:ncol(bfcpt)){
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
-if(T){
+if(F){
   future::plan(
     future.batchtools::batchtools_slurm,
     template="~/slurm-future.tmpl",
