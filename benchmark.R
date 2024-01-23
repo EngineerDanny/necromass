@@ -74,11 +74,12 @@ batchtools::getStatus(reg=reg)
 ##   ---- Error   :   71 (  3.7%)
 ##   ---- Expired :    0 (  0.0%)
 
+batchtools::getJobTable()[!is.na(error)]
 table(jobs.after$error)
 jobs.after <- batchtools::getJobTable(reg=reg)
 jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][25:26]
                                                                                  
-## 1:                                            Error in approx(lambda, seq(lambda), sfrac) : \n  need at least two non-NA values to interpolate
+## 1: Error in approx(lambda, seq(lambda), sfrac) : \n  need at least two non-NA values to interpolate
 ## 2: Error in elnet(xd, is.sparse, y, weights, offset, type.gaussian, alpha,  : \n  y is constant; gaussian glmnet fails at standardization step
 ##    task_id
 ## 1: Kaistia
