@@ -7,3 +7,5 @@
 *.Rproj
 danny-data-reg/
 *.pdf
+*.png
+*.Rhistory
