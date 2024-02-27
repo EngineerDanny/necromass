@@ -30,8 +30,9 @@ print(gg)
 dev.off()
 
 ## TODO compute p-value for difference between cv_glmnet and featureless
-ggplot()+
+gg2 <- ggplot()+
   geom_point(aes(
     cv_glmnet-featureless, train.groups),
     data=score.wide)+
   facet_grid(. ~ test.group, labeller=label_both)
+print(gg2)
