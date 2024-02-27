@@ -35,4 +35,3 @@ gg2 <- ggplot()+
     cv_glmnet-featureless, train.groups),
     data=score.wide)+
   facet_grid(. ~ test.group, labeller=label_both)
-print(gg2)
