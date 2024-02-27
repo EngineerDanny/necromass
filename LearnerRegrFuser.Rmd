@@ -9,10 +9,16 @@ library(paradox)
 
 ```{r}
 
+# Load the required packages
+library(mlr3)
+library(mlr3learners)
+library(fuser)
+
 # Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
   public = list(
+    # Initialize the learner with the required parameters
     initialize = function() {
       ps = ParamSet$new(
         params = list(
@@ -23,12 +29,14 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       )
       super$initialize(
         id = "regr.fuser",
-        feature_types = c("integer", "numeric"),
+        feature_types = c("integer", "numeric", "factor"),
         predict_types = c("response"),
         packages = "fuser",
         param_set = ps
       )
     },
+
+    # Train the learner on a given task
     train_internal = function(task) {
       # Extract the data and response from the task
       x = as.matrix(task$data(cols = task$feature_names))
@@ -40,16 +48,34 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       lambda = pars$lambda
       gamma = pars$gamma
       method = pars$method
+      # Encode the factor features into dummy variables
+      x = model.matrix(~ . - 1, data = as.data.frame(x))
+      # Remove the intercept column if present
+      x = x[, !colnames(x) %in% "(Intercept)"]
+      # Convert the factor groups to a numeric vector based on the desired grouping
+      groups = ifelse(groups == "A", 1, 2) # Add this line
       # Generate the block diagonal matrices for the L2 fusion approach
       transformed.data = generateBlockDiagonalMatrices(x, y, groups)
       # Use L2 fusion to estimate the coefficients
-      beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, transformed.data$Y, groups, lambda = lambda, gamma = gamma, method = method)
+      beta.estimate = fusedL2DescentGLMNet(transformed.data$X, 
+                                           transformed.data$X.fused, 
+                                           transformed.data$Y, 
+                                           groups, 
+                                           lambda = lambda, 
+                                           gamma = gamma, 
+                                           method = method)
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, groups = groups)
     },
+
+    # Predict the response for new data
     predict_internal = function(task) {
       # Extract the data from the task
       x = as.matrix(task$data(cols = task$feature_names))
+      # Encode the factor features into dummy variables
+      x = model.matrix(~ . - 1, data = as.data.frame(x))
+      # Remove the intercept column if present
+      x = x[, !colnames(x) %in% "(Intercept)"]
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
       groups = self$model$groups
@@ -61,21 +87,17 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   )
 )
 
-```
-
-
-```{r}
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
+
+
 ```
 
 
+
 ```{r}
-# Load the spam task
-task = tsk("spam")
-learner = lrn("regr.fuser", lambda = 0.1, gamma = 0.1)
-learner$train(task)
-predict(learner, task$data(1:3), predict_type = "response")
+learner$task_type
+task$task_type
 ```
 
 
