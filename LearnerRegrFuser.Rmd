@@ -3,12 +3,16 @@
 library(mlr3)
 library(mlr3learners)
 library(fuser)
+library(R6)
+library(paradox)
+```
+
+```{r}
 
 # Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
   public = list(
-    # Initialize the learner with the required parameters
     initialize = function() {
       ps = ParamSet$new(
         params = list(
@@ -25,8 +29,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
         param_set = ps
       )
     },
-
-    # Train the learner on a given task
     train_internal = function(task) {
       # Extract the data and response from the task
       x = as.matrix(task$data(cols = task$feature_names))
@@ -45,8 +47,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, groups = groups)
     },
-
-    # Predict the response for new data
     predict_internal = function(task) {
       # Extract the data from the task
       x = as.matrix(task$data(cols = task$feature_names))
@@ -61,8 +61,29 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   )
 )
 
+```
+
+
+```{r}
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
+```
 
 
+```{r}
+# Load the spam task
+task = tsk("spam")
+learner = lrn("regr.fuser", lambda = 0.1, gamma = 0.1)
+learner$train(task)
+predict(learner, task$data(1:3), predict_type = "response")
+```
+
+
+```{r}
+# Load the Boston house price dataset
+data("BostonHousing", package = "mlbench")
+# Create a regression task with the dataset
+task = TaskRegr$new(id = "boston", backend = BostonHousing, target = "medv")
+learner = lrn("regr.fuser", lambda = 0.1, gamma = 0.1)
+learner$train(task)
 ```
