@@ -8,81 +8,88 @@ library(paradox)
 ```
 
 ```{r}
-
-# Load the required packages
-library(mlr3)
-library(mlr3learners)
-library(fuser)
-
 # Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
-  public = list(
-    # Initialize the learner with the required parameters
+  public = list( 
     initialize = function() {
-      ps = ParamSet$new(
-        params = list(
+       params = list(
           ParamDbl$new("lambda", lower = 0, upper = 1, default = 0.01),
           ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01),
-          ParamFct$new("method", levels = c("RSpectra", "irlba"), default = "RSpectra")
+          ParamUty$new(id = "groups", default = NULL, tags = ""),
+          ParamUty$new(id = "G", default = NULL, tags = ""),
+          ParamInt$new(id = "k", default = 5, tags = ""),
+          ParamInt$new(id = "n.group", default = 100, tags = "")
         )
-      )
+      ps = ParamSet$new(params = params)
       super$initialize(
         id = "regr.fuser",
-        feature_types = c("integer", "numeric", "factor"),
+        param_set = ps,
+        feature_types = c("logical", "integer", "numeric", "factor"),
         predict_types = c("response"),
-        packages = "fuser",
-        param_set = ps
+        packages = "fuser"
       )
-    },
-
-    # Train the learner on a given task
-    train_internal = function(task) {
-      # Extract the data and response from the task
-      x = as.matrix(task$data(cols = task$feature_names))
+    }
+  ),
+  private = list(
+    .train = function(task) {
+      X = as.matrix(task$data(cols = task$feature_names))
       y = as.matrix(task$data(cols = task$target_names))
-      # Extract the groups from the task (assuming they are stored as a column named "groups")
-      groups = as.factor(task$data(cols = "groups"))
-      # Extract the parameters from the learner
       pars = self$param_set$get_values()
       lambda = pars$lambda
       gamma = pars$gamma
-      method = pars$method
-      # Encode the factor features into dummy variables
-      x = model.matrix(~ . - 1, data = as.data.frame(x))
-      # Remove the intercept column if present
-      x = x[, !colnames(x) %in% "(Intercept)"]
+      groups = pars$groups
+      G = pars$G
+      k = pars$k
+      n.group = pars$n.group
+      n.group = as.integer(n.group)
+      k = as.integer(k)
+      y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
+      X = apply(X, 2, as.numeric)
+  
       # Convert the factor groups to a numeric vector based on the desired grouping
-      groups = ifelse(groups == "A", 1, 2) # Add this line
       # Generate the block diagonal matrices for the L2 fusion approach
-      transformed.data = generateBlockDiagonalMatrices(x, y, groups)
-      # Use L2 fusion to estimate the coefficients
-      beta.estimate = fusedL2DescentGLMNet(transformed.data$X, 
-                                           transformed.data$X.fused, 
-                                           transformed.data$Y, 
-                                           groups, 
+      # transformed.data = generateBlockDiagonalMatrices(X, y, groups)
+      # beta.estimate = fusedL2DescentGLMNet(transformed.data$X, 
+      #                                     transformed.data$X.fused, 
+      #                                     transformed.data$Y, 
+      #                                     groups, 
+      #                                     lambda = lambda, 
+      #                                     gamma = gamma)
+      
+      beta.estimate = fusedLassoProximal(X, y, groups, 
                                            lambda = lambda, 
-                                           gamma = gamma, 
-                                           method = method)
+                                           tol=9e-5, 
+                                           gamma = gamma,
+                                           G, intercept=FALSE,
+                                          num.it=2000) 
+      
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, groups = groups)
     },
-
-    # Predict the response for new data
-    predict_internal = function(task) {
-      # Extract the data from the task
-      x = as.matrix(task$data(cols = task$feature_names))
-      # Encode the factor features into dummy variables
-      x = model.matrix(~ . - 1, data = as.data.frame(x))
-      # Remove the intercept column if present
-      x = x[, !colnames(x) %in% "(Intercept)"]
+    .predict = function(task) {
+      X = as.matrix(task$data(cols = task$feature_names))
+      X = apply(X, 2, as.numeric)
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
       groups = self$model$groups
+      print("beta")
+      print(beta)
+      print("groups")
+      print(groups)
+      k = 5
+      print("k")
+      print(k)
       # Calculate the predicted response by multiplying the data and the coefficients
-      yhat = x %*% beta[, groups]
+      y.predict = sapply(1:k, function(k.i) X[[k.i]] %*% beta[,k.i]) 
+      print("y.predict")
+      print(y.predict)
+      
+      yhat = X %*% beta[, groups]
+      print("yhat")
+      print(yhat)
       # Return the prediction as a PredictionRegr object
-      PredictionRegr$new(task = task, response = yhat)
+      PredictionRegr$new(task = task, response = y.predict)
     }
   )
 )
@@ -90,22 +97,144 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
+# Generate simple heterogeneous dataset
+k = 5 # number of groups
+n.group = 100 # number of samples per group
+groups = rep(1:k, each=n.group) # group indicators
+G = matrix(1, k, k) 
 
-```
-
-
-
-```{r}
-learner$task_type
-task$task_type
-```
-
-
-```{r}
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
 # Create a regression task with the dataset
+BostonHousing = BostonHousing[1:500, ]
+task = TaskRegr$new(id = "boston", 
+                    backend = BostonHousing, 
+                    target = "medv")
+learner = lrn("regr.fuser", 
+              lambda = 0.1, 
+              gamma = 0.1, 
+              groups=groups, 
+              G=G,
+              k = k,
+              n.group = n.group
+              )
+# Create a learner instance
+learner$train(task)
+learner$predict(task)
+```
+
+
+```{r}
+LearnerRegrGlmnet = R6Class("LearnerRegrGlmnet",
+  inherit = LearnerRegr,
+  public = list(
+    initialize = function() {
+      ps = ps(
+        alignment             = p_fct(c("lambda", "fraction"), default = "lambda", tags = "train"),
+        alpha                 = p_dbl(0, 1, default = 1, tags = "train"),
+        big                   = p_dbl(default = 9.9e35, tags = "train"),
+        devmax                = p_dbl(0, 1, default = 0.999, tags = "train"),
+        dfmax                 = p_int(0L, tags = "train"),
+        eps                   = p_dbl(0, 1, default = 1.0e-6, tags = "train"),
+        epsnr                 = p_dbl(0, 1, default = 1.0e-8, tags = "train"),
+        exact                 = p_lgl(default = FALSE, tags = "predict"),
+        exclude               = p_int(1L, tags = "train"),
+        exmx                  = p_dbl(default = 250.0, tags = "train"),
+        family                = p_fct(c("gaussian", "poisson"), default = "gaussian", tags = "train"),
+        fdev                  = p_dbl(0, 1, default = 1.0e-5, tags = "train"),
+        gamma                 = p_dbl(default = 1, tags = "train"),
+        grouped               = p_lgl(default = TRUE, tags = "train"),
+        intercept             = p_lgl(default = TRUE, tags = "train"),
+        keep                  = p_lgl(default = FALSE, tags = "train"),
+        lambda                = p_uty(tags = "train"),
+        lambda.min.ratio      = p_dbl(0, 1, tags = "train"),
+        lower.limits          = p_uty(tags = "train"),
+        maxit                 = p_int(1L, default = 100000L, tags = "train"),
+        mnlam                 = p_int(1L, default = 5L, tags = "train"),
+        mxit                  = p_int(1L, default = 100L, tags = "train"),
+        mxitnr                = p_int(1L, default = 25L, tags = "train"),
+        newoffset             = p_uty(tags = "predict"),
+        nlambda               = p_int(1L, default = 100L, tags = "train"),
+        offset                = p_uty(default = NULL, tags = "train"),
+        parallel              = p_lgl(default = FALSE, tags = "train"),
+        penalty.factor        = p_uty(tags = "train"),
+        pmax                  = p_int(0L, tags = "train"),
+        pmin                  = p_dbl(0, 1, default = 1.0e-9, tags = "train"),
+        prec                  = p_dbl(default = 1e-10, tags = "train"),
+        relax                 = p_lgl(default = FALSE, tags = "train"),
+        s                     = p_dbl(0, default = 0.01, tags = "predict"),
+        standardize           = p_lgl(default = TRUE, tags = "train"),
+        standardize.response  = p_lgl(default = FALSE, tags = "train"),
+        thresh                = p_dbl(0, default = 1e-07, tags = "train"),
+        trace.it              = p_int(0, 1, default = 0, tags = "train"),
+        type.gaussian         = p_fct(c("covariance", "naive"), tags = "train"),
+        type.logistic         = p_fct(c("Newton", "modified.Newton"), tags = "train"),
+        type.multinomial      = p_fct(c("ungrouped", "grouped"), tags = "train"),
+        upper.limits          = p_uty(tags = "train")
+      )
+      ps$add_dep("gamma", "relax", CondEqual$new(TRUE))
+      ps$add_dep("type.gaussian", "family", CondEqual$new("gaussian"))
+
+      ps$values = list(family = "gaussian")
+
+      super$initialize(
+        id = "regr.glmnet",
+        param_set = ps,
+        feature_types = c("logical", "integer", "numeric"),
+        properties = "weights",
+        packages = c("mlr3learners", "glmnet"),
+        label = "GLM with Elastic Net Regularization",
+        man = "mlr3learners::mlr_learners_regr.glmnet"
+      )
+    },
+    selected_features = function(lambda = NULL) {
+      glmnet_selected_features(self, lambda)
+    }
+  ),
+
+  private = list(
+    .train = function(task) {
+      data = as_numeric_matrix(task$data(cols = task$feature_names))
+      target = as_numeric_matrix(task$data(cols = task$target_names))
+      pv = self$param_set$get_values(tags = "train")
+      if ("weights" %in% task$properties) {
+        pv$weights = task$weights$weight
+      }
+
+      glmnet_invoke(data, target, pv)
+    },
+
+    .predict = function(task) {
+      newdata = as_numeric_matrix(ordered_features(task, self))
+      pv = self$param_set$get_values(tags = "predict")
+      pv = rename(pv, "predict.gamma", "gamma")
+      pv$s = glmnet_get_lambda(self, pv)
+
+      response = invoke(predict, self$model,
+        newx = newdata,
+        type = "response", .args = pv)
+      list(response = drop(response))
+    }
+  )
+)
+
+learners[["regr.glmnet"]] = LearnerRegrGlmnet
+```
+
+
+
+
+```{r}
+# Generate simple heterogeneous dataset
+k = 5 # number of groups
+n.group = 100 # number of samples per group
+groups = rep(1:k, each=n.group) # group indicators
+
+# Load the Boston house price dataset
+data("BostonHousing", package = "mlbench")
+# Create a regression task with the dataset
+BostonHousing = BostonHousing[1:500, ]
 task = TaskRegr$new(id = "boston", backend = BostonHousing, target = "medv")
 learner = lrn("regr.fuser", lambda = 0.1, gamma = 0.1)
-learner$train(task)
+learner$train(task, groups = groups)
 ```
