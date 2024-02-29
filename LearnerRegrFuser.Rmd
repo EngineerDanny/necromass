@@ -23,7 +23,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   public = list( 
     initialize = function() {
        params = list(
-          ParamDbl$new("lambda", lower = 0, upper = 1, default = 0.01),
+          ParamDbl$new("lambda", lower = 0, upper = 1),
           ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01),
           ParamUty$new(id = "groups", default = NULL, tags = ""),
           ParamUty$new(id = "G", default = NULL, tags = ""),
@@ -49,18 +49,19 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       gamma = pv$gamma
       groups = pv$groups
       G = pv$G
-      k = pv$k
-      n.group = pv$n.group
-      n.group = as.integer(n.group)
-      k = as.integer(k)
+      k = as.integer(pv$k) 
+      n.group = as.integer(pv$n.group)
+      
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
       beta.estimate = fusedLassoProximal(X, y, groups, 
-                                           lambda = lambda, 
-                                           tol=9e-5, 
+                                          lambda = lambda, 
+                                           tol = 9e-5, 
                                            gamma = gamma,
-                                           G, intercept=FALSE,
-                                           num.it=2000) 
+                                           G = G, 
+                                           intercept = FALSE,
+                                           scaling = FALSE,
+                                           num.it = 5000) 
       
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, 
@@ -79,7 +80,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
       X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
-      # Calculate the predicted response by multiplying the data and the coefficients
       y.predict = sapply(1:k, function(k.i) X.list[[k.i]] %*% beta[,k.i]) 
       y.predict = c(y.predict)
       list(response = y.predict)
@@ -90,7 +90,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
-# Generate simple heterogeneous dataset
 k = 5 # number of groups
 n.group = 100 # number of samples per group
 groups = rep(1:k, each=n.group) # group indicators
@@ -100,12 +99,13 @@ G = matrix(1, k, k)
 data("BostonHousing", package = "mlbench")
 # Create a regression task with the dataset
 BostonHousing = BostonHousing[1:500, ]
+BostonHousing$chas <- NULL
 task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing, 
                     target = "medv")
 learner = lrn("regr.fuser", 
-              lambda = 0.01, 
-              gamma = 0.01, 
+              lambda = 0.001, 
+              gamma = 0.001, 
               groups = groups, 
               G = G,
               k = k,
@@ -118,13 +118,9 @@ learner$predict(task)
 
 
 ```{r}
-
-
-
 LearnerRegrKKNN = R6Class("LearnerRegrKKNN",
   inherit = LearnerRegr,
   public = list(
-
     #' @description
     #' Creates a new instance of this [R6][R6::R6Class] class.
     initialize = function() {
