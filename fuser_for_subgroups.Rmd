@@ -61,7 +61,7 @@ ggplot(plotting.frame, aes(x=Beta.True, y=Beta.Estimate, colour=Group)) +
 
 ```{r}
 # Predict response based on estimated betas
-y.predict.new = sapply(1:k, function(k.i) X.test[[k.i]] %*% beta.estimate[,k.i]) 
+y.predict = sapply(1:k, function(k.i) X.test[[k.i]] %*% beta.estimate[,k.i]) 
 ```
 
 ```{r}

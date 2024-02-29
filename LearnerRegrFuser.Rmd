@@ -82,42 +82,17 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     },
     .predict = function(task) {
       X = ordered_features(task, self)
-      #X = as_numeric_matrix(ordered_features(task, self))
       X = as.matrix(task$data(cols = task$feature_names))
       X = apply(X, 2, as.numeric)
       k = 5
       n.group = 100
-      nrow.X = nrow(X)
-      print("nrow.X")
-      print(nrow.X)
-      
-      mX <- X
-      
-      # Split X into a list of k matrices
-      #X.list <- lapply(1:k, function(k.i) X[ 1:(k.i*n.group), ])
-      X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
-      
-      print(X.list)
-      
-      #X.test = lapply(1:k, function(k.i) matrix(rnorm(n.group*p),n.group, p)) # covariates
-      
-      #print("X")
-      #print(X)
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
-      #print("beta")
-      #print(beta)
-    
+      X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
       # Calculate the predicted response by multiplying the data and the coefficients
       y.predict = sapply(1:k, function(k.i) X.list[[k.i]] %*% beta[,k.i]) 
-      #print("y.predict")
-      #print(y.predict)
-      
-      # Return the prediction as a PredictionRegr object
-      #PredictionRegr$new(task = task, response = y.predict)
-      #list(response = y.predict)
-      y.predict
-      PredictionRegr$new(task = task, response = y.predict)
+      y.predict = c(y.predict)
+      list(response = y.predict)
     }
   )
 )
