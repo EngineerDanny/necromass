@@ -2,12 +2,21 @@
 # Load the required packages
 library(mlr3)
 library(mlr3learners)
+library(mlr3misc)
 library(fuser)
 library(R6)
 library(paradox)
+library(kknn)
 ```
 
 ```{r}
+
+ordered_features = function(task, learner) {
+  cols = names(learner$state$data_prototype)
+  task$data(cols = intersect(cols, task$feature_names))
+}
+
+
 # Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
@@ -26,8 +35,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
         id = "regr.fuser",
         param_set = ps,
         feature_types = c("logical", "integer", "numeric", "factor"),
-        predict_types = c("response"),
-        packages = "fuser"
+        label = "Fuser",
+        packages = c("mlr3learners", "fuser")
       )
     }
   ),
@@ -35,18 +44,17 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     .train = function(task) {
       X = as.matrix(task$data(cols = task$feature_names))
       y = as.matrix(task$data(cols = task$target_names))
-      pars = self$param_set$get_values()
-      lambda = pars$lambda
-      gamma = pars$gamma
-      groups = pars$groups
-      G = pars$G
-      k = pars$k
-      n.group = pars$n.group
+      pv = self$param_set$get_values()
+      lambda = pv$lambda
+      gamma = pv$gamma
+      groups = pv$groups
+      G = pv$G
+      k = pv$k
+      n.group = pv$n.group
       n.group = as.integer(n.group)
       k = as.integer(k)
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
-  
       # Convert the factor groups to a numeric vector based on the desired grouping
       # Generate the block diagonal matrices for the L2 fusion approach
       # transformed.data = generateBlockDiagonalMatrices(X, y, groups)
@@ -62,33 +70,53 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                            tol=9e-5, 
                                            gamma = gamma,
                                            G, intercept=FALSE,
-                                          num.it=2000) 
+                                           num.it=2000) 
       
       # Store the coefficients in the learner
-      self$model = list(beta = beta.estimate, groups = groups)
+      self$model = list(beta = beta.estimate, 
+                        formula = task$formula(),
+                        data = task$data(),
+                        pv = pv,
+                        groups = groups)
+      self$model
     },
     .predict = function(task) {
+      X = ordered_features(task, self)
+      #X = as_numeric_matrix(ordered_features(task, self))
       X = as.matrix(task$data(cols = task$feature_names))
       X = apply(X, 2, as.numeric)
+      k = 5
+      n.group = 100
+      nrow.X = nrow(X)
+      print("nrow.X")
+      print(nrow.X)
+      
+      mX <- X
+      
+      # Split X into a list of k matrices
+      #X.list <- lapply(1:k, function(k.i) X[ 1:(k.i*n.group), ])
+      X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
+      
+      print(X.list)
+      
+      #X.test = lapply(1:k, function(k.i) matrix(rnorm(n.group*p),n.group, p)) # covariates
+      
+      #print("X")
+      #print(X)
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
-      groups = self$model$groups
-      print("beta")
-      print(beta)
-      print("groups")
-      print(groups)
-      k = 5
-      print("k")
-      print(k)
+      #print("beta")
+      #print(beta)
+    
       # Calculate the predicted response by multiplying the data and the coefficients
-      y.predict = sapply(1:k, function(k.i) X[[k.i]] %*% beta[,k.i]) 
-      print("y.predict")
-      print(y.predict)
+      y.predict = sapply(1:k, function(k.i) X.list[[k.i]] %*% beta[,k.i]) 
+      #print("y.predict")
+      #print(y.predict)
       
-      yhat = X %*% beta[, groups]
-      print("yhat")
-      print(yhat)
       # Return the prediction as a PredictionRegr object
+      #PredictionRegr$new(task = task, response = y.predict)
+      #list(response = y.predict)
+      y.predict
       PredictionRegr$new(task = task, response = y.predict)
     }
   )
@@ -125,116 +153,93 @@ learner$predict(task)
 
 
 ```{r}
-LearnerRegrGlmnet = R6Class("LearnerRegrGlmnet",
+
+
+
+LearnerRegrKKNN = R6Class("LearnerRegrKKNN",
   inherit = LearnerRegr,
   public = list(
+
+    #' @description
+    #' Creates a new instance of this [R6][R6::R6Class] class.
     initialize = function() {
       ps = ps(
-        alignment             = p_fct(c("lambda", "fraction"), default = "lambda", tags = "train"),
-        alpha                 = p_dbl(0, 1, default = 1, tags = "train"),
-        big                   = p_dbl(default = 9.9e35, tags = "train"),
-        devmax                = p_dbl(0, 1, default = 0.999, tags = "train"),
-        dfmax                 = p_int(0L, tags = "train"),
-        eps                   = p_dbl(0, 1, default = 1.0e-6, tags = "train"),
-        epsnr                 = p_dbl(0, 1, default = 1.0e-8, tags = "train"),
-        exact                 = p_lgl(default = FALSE, tags = "predict"),
-        exclude               = p_int(1L, tags = "train"),
-        exmx                  = p_dbl(default = 250.0, tags = "train"),
-        family                = p_fct(c("gaussian", "poisson"), default = "gaussian", tags = "train"),
-        fdev                  = p_dbl(0, 1, default = 1.0e-5, tags = "train"),
-        gamma                 = p_dbl(default = 1, tags = "train"),
-        grouped               = p_lgl(default = TRUE, tags = "train"),
-        intercept             = p_lgl(default = TRUE, tags = "train"),
-        keep                  = p_lgl(default = FALSE, tags = "train"),
-        lambda                = p_uty(tags = "train"),
-        lambda.min.ratio      = p_dbl(0, 1, tags = "train"),
-        lower.limits          = p_uty(tags = "train"),
-        maxit                 = p_int(1L, default = 100000L, tags = "train"),
-        mnlam                 = p_int(1L, default = 5L, tags = "train"),
-        mxit                  = p_int(1L, default = 100L, tags = "train"),
-        mxitnr                = p_int(1L, default = 25L, tags = "train"),
-        newoffset             = p_uty(tags = "predict"),
-        nlambda               = p_int(1L, default = 100L, tags = "train"),
-        offset                = p_uty(default = NULL, tags = "train"),
-        parallel              = p_lgl(default = FALSE, tags = "train"),
-        penalty.factor        = p_uty(tags = "train"),
-        pmax                  = p_int(0L, tags = "train"),
-        pmin                  = p_dbl(0, 1, default = 1.0e-9, tags = "train"),
-        prec                  = p_dbl(default = 1e-10, tags = "train"),
-        relax                 = p_lgl(default = FALSE, tags = "train"),
-        s                     = p_dbl(0, default = 0.01, tags = "predict"),
-        standardize           = p_lgl(default = TRUE, tags = "train"),
-        standardize.response  = p_lgl(default = FALSE, tags = "train"),
-        thresh                = p_dbl(0, default = 1e-07, tags = "train"),
-        trace.it              = p_int(0, 1, default = 0, tags = "train"),
-        type.gaussian         = p_fct(c("covariance", "naive"), tags = "train"),
-        type.logistic         = p_fct(c("Newton", "modified.Newton"), tags = "train"),
-        type.multinomial      = p_fct(c("ungrouped", "grouped"), tags = "train"),
-        upper.limits          = p_uty(tags = "train")
+        k           = p_int(default = 7L, lower = 1L, tags = "train"),
+        distance    = p_dbl(0, default = 2, tags = "train"),
+        kernel      = p_fct(c("rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", "inv", "gaussian", "rank", "optimal"), default = "optimal", tags = "train"),
+        scale       = p_lgl(default = TRUE, tags = "train"),
+        ykernel     = p_uty(default = NULL, tags = "train"),
+        store_model = p_lgl(default = FALSE, tags = "train")
       )
-      ps$add_dep("gamma", "relax", CondEqual$new(TRUE))
-      ps$add_dep("type.gaussian", "family", CondEqual$new("gaussian"))
 
-      ps$values = list(family = "gaussian")
+      ps$values = list(k = 7L)
 
       super$initialize(
-        id = "regr.glmnet",
+        id = "regr.kknn",
         param_set = ps,
-        feature_types = c("logical", "integer", "numeric"),
-        properties = "weights",
-        packages = c("mlr3learners", "glmnet"),
-        label = "GLM with Elastic Net Regularization",
-        man = "mlr3learners::mlr_learners_regr.glmnet"
+        feature_types = c("logical", "integer", "numeric", "factor", "ordered"),
+        packages = c("mlr3learners", "kknn"),
+        label = "k-Nearest-Neighbor",
+        man = "mlr3learners::mlr_learners_regr.kknn"
       )
-    },
-    selected_features = function(lambda = NULL) {
-      glmnet_selected_features(self, lambda)
     }
   ),
 
   private = list(
     .train = function(task) {
-      data = as_numeric_matrix(task$data(cols = task$feature_names))
-      target = as_numeric_matrix(task$data(cols = task$target_names))
+      # https://github.com/mlr-org/mlr3learners/issues/191
       pv = self$param_set$get_values(tags = "train")
-      if ("weights" %in% task$properties) {
-        pv$weights = task$weights$weight
+      if (pv$k >= task$nrow) {
+        stopf("Parameter k = %i must be smaller than the number of observations n = %i",
+          pv$k, task$nrow)
       }
 
-      glmnet_invoke(data, target, pv)
+     
+      
+      self$model <- list(
+        formula = task$formula(),
+        data = task$data(),
+        pv = pv,
+        kknn = NULL
+      )
+      print("self$model")
+      print(self$model)
     },
 
     .predict = function(task) {
-      newdata = as_numeric_matrix(ordered_features(task, self))
-      pv = self$param_set$get_values(tags = "predict")
-      pv = rename(pv, "predict.gamma", "gamma")
-      pv$s = glmnet_get_lambda(self, pv)
+      model = self$model
+      newdata = ordered_features(task, self)
+      pv = insert_named(model$pv, self$param_set$get_values(tags = "predict"))
 
-      response = invoke(predict, self$model,
-        newx = newdata,
-        type = "response", .args = pv)
-      list(response = drop(response))
+      with_package("kknn", { # https://github.com/KlausVigo/kknn/issues/16
+        p = invoke(kknn::kknn,
+          formula = model$formula, train = model$data,
+          test = newdata, .args = remove_named(pv, "store_model"))
+      })
+
+      if (isTRUE(pv$store_model)) {
+        self$state$model$kknn = p
+      }
+
+      list(response = p$fitted.values)
     }
   )
 )
 
-learners[["regr.glmnet"]] = LearnerRegrGlmnet
-```
-
-
-
-
-```{r}
-# Generate simple heterogeneous dataset
-k = 5 # number of groups
-n.group = 100 # number of samples per group
-groups = rep(1:k, each=n.group) # group indicators
 
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-# Create a regression task with the dataset
 BostonHousing = BostonHousing[1:500, ]
-task = TaskRegr$new(id = "boston", backend = BostonHousing, target = "medv")
-learner = lrn("regr.fuser", lambda = 0.1, gamma = 0.1)
-learner$train(task, groups = groups)
+BostonHousing$chas <- NULL
+
+mlr_learners$add("regr.glmnet", LearnerRegrKKNN)
+
+task = TaskRegr$new(id = "boston", 
+                    backend = BostonHousing, 
+                    target = "medv")
+learner = lrn("regr.glmnet")
+# Create a learner instance
+learner$train(task)
+learner$predict(task)
 ```
+
