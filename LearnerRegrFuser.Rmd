@@ -55,16 +55,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       k = as.integer(k)
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
-      # Convert the factor groups to a numeric vector based on the desired grouping
-      # Generate the block diagonal matrices for the L2 fusion approach
-      # transformed.data = generateBlockDiagonalMatrices(X, y, groups)
-      # beta.estimate = fusedL2DescentGLMNet(transformed.data$X, 
-      #                                     transformed.data$X.fused, 
-      #                                     transformed.data$Y, 
-      #                                     groups, 
-      #                                     lambda = lambda, 
-      #                                     gamma = gamma)
-      
       beta.estimate = fusedLassoProximal(X, y, groups, 
                                            lambda = lambda, 
                                            tol=9e-5, 
@@ -114,10 +104,10 @@ task = TaskRegr$new(id = "boston",
                     backend = BostonHousing, 
                     target = "medv")
 learner = lrn("regr.fuser", 
-              lambda = 0.1, 
-              gamma = 0.1, 
-              groups=groups, 
-              G=G,
+              lambda = 0.01, 
+              gamma = 0.01, 
+              groups = groups, 
+              G = G,
               k = k,
               n.group = n.group
               )
