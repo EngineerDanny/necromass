@@ -61,7 +61,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                            intercept = FALSE,
                                            scaling = FALSE,
                                            num.it = 5000) 
-      
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, 
                         formula = task$formula(),
@@ -92,7 +91,6 @@ k = 5 # number of groups
 n.group = 100 # number of samples per group
 groups = rep(1:k, each=n.group) # group indicators
 G = matrix(1, k, k) 
-
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
 BostonHousing = BostonHousing[1:500, ]
