@@ -16,7 +16,6 @@ ordered_features = function(task, learner) {
   task$data(cols = intersect(cols, task$feature_names))
 }
 
-
 # Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
@@ -86,7 +85,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     }
   )
 )
-
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
@@ -97,7 +95,6 @@ G = matrix(1, k, k)
 
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-# Create a regression task with the dataset
 BostonHousing = BostonHousing[1:500, ]
 BostonHousing$chas <- NULL
 task = TaskRegr$new(id = "boston", 
