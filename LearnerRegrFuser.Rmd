@@ -33,12 +33,6 @@ table(group.tab <- task.dt$sample_group)
 
 ```{r}
 
-
-```
-
-
-```{r}
-
 ordered_features = function(task, learner) {
   cols = names(learner$state$data_prototype)
   task$data(cols = intersect(cols, task$feature_names))
@@ -49,15 +43,15 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
   public = list( 
     initialize = function() {
-       params = list(
-          ParamDbl$new("lambda", lower = 0, upper = 1),
-          ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01)
-          #ParamUty$new(id = "groups", default = NULL, tags = ""),
-          #ParamUty$new(id = "G", default = NULL, tags = ""),
-          #ParamInt$new(id = "k", default = 5, tags = ""),
-          #ParamInt$new(id = "n.group", default = 100, tags = "")
-        )
-      ps = ParamSet$new(params = params)
+       ps = ps(
+          lambda = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
+          gamma = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
+          tol = p_dbl(lower = 0, upper = 1, default = 9e-5, tags = "train"),
+          num.it = p_int(lower = 1, upper = 1000000, default = 5000, tags = "train")
+       )
+       
+       ps$values = list(lambda = 0.01, gamma = 0.01, tol = 9e-5, num.it = 5000)
+  
       super$initialize(
         id = "regr.fuser",
         param_set = ps,
@@ -65,6 +59,15 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
         label = "Fuser",
         packages = c("mlr3learners", "fuser")
       )
+      
+    #  lapply(self$param_set$params, function(param) {
+    #  value <- self$param_set$values[[param$id]]
+    #  if (is.null(value)) {
+    #    self$param_set$values[[param$id]] <- param$default
+    #    }
+    #  })
+      
+      
     }
   ),
   private = list(
@@ -86,20 +89,29 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       print("G")
       print(G)
       
-      pv = self$param_set$get_values()
+      pv = self$param_set$get_values(tags = "train")
       lambda = pv$lambda
       gamma = pv$gamma
+      tol = pv$tol
+      num.it = pv$num.it
+      
+      print("self$param_set")
+      print(self$param_set$get)
+      
+      print("num.it")
+      print(num.it)
   
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
       beta.estimate = fusedLassoProximal(X, y, group_ind, 
                                            lambda = lambda, 
-                                           tol = 9e-5, 
-                                           gamma = gamma,
                                            G = G, 
+                                           gamma = gamma,
+                                           tol = tol, 
+                                           num.it = num.it,
                                            intercept = FALSE,
-                                           scaling = FALSE,
-                                           num.it = 5000) 
+                                           scaling = FALSE
+                                         ) 
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, 
                         formula = task$formula(),
@@ -167,20 +179,112 @@ learner$predict(pred_task)
 
 
 ```
+```{r}
 
+#' @title k-Nearest-Neighbor Regression Learner
+#'
+#' @name mlr_learners_regr.kknn
+#'
+#' @description
+#' k-Nearest-Neighbor regression.
+#' Calls [kknn::kknn()] from package \CRANpkg{kknn}.
+#'
+#' @section Initial parameter values:
+#' - `store_model`:
+#'   - See note.
+#'
+#' @template note_kknn
+#'
+#' @templateVar id regr.kknn
+#' @template learner
+#'
+#' @references
+#' `r format_bib("hechenbichler_2004", "samworth_2012", "cover_1967")`
+#'
+#' @export
+#' @template seealso_learner
+#' @template example
+LearnerRegrKKNN = R6Class("LearnerRegrKKNN",
+  inherit = LearnerRegr,
+  public = list(
 
+    #' @description
+    #' Creates a new instance of this [R6][R6::R6Class] class.
+    initialize = function() {
+      ps = ps(
+        k           = p_int(default = 7L, lower = 1L, tags = "train"),
+        distance    = p_dbl(0, default = 2, tags = "train"),
+        kernel      = p_fct(c("rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", "inv", "gaussian", "rank", "optimal"), default = "optimal", tags = "train"),
+        scale       = p_lgl(default = TRUE, tags = "train"),
+        ykernel     = p_uty(default = NULL, tags = "train"),
+        store_model = p_lgl(default = FALSE, tags = "train")
+      )
+
+      ps$values = list(k = 7L)
+
+      super$initialize(
+        id = "regr.kknn",
+        param_set = ps,
+        feature_types = c("logical", "integer", "numeric", "factor", "ordered"),
+        packages = c("mlr3learners", "kknn"),
+        label = "k-Nearest-Neighbor",
+        man = "mlr3learners::mlr_learners_regr.kknn"
+      )
+    }
+  ),
+
+  private = list(
+    .train = function(task) {
+      # https://github.com/mlr-org/mlr3learners/issues/191
+      pv = self$param_set$get_values(tags = "train")
+      if (pv$k >= task$nrow) {
+        stopf("Parameter k = %i must be smaller than the number of observations n = %i",
+          pv$k, task$nrow)
+      }
+
+      list(
+        formula = task$formula(),
+        data = task$data(),
+        pv = pv,
+        kknn = NULL
+      )
+    },
+
+    .predict = function(task) {
+      model = self$model
+      newdata = ordered_features(task, self)
+      pv = insert_named(model$pv, self$param_set$get_values(tags = "predict"))
+
+      with_package("kknn", { # https://github.com/KlausVigo/kknn/issues/16
+        p = invoke(kknn::kknn,
+          formula = model$formula, train = model$data,
+          test = newdata, .args = remove_named(pv, "store_model"))
+      })
+
+      if (isTRUE(pv$store_model)) {
+        self$state$model$kknn = p
+      }
+
+      list(response = p$fitted.values)
+    }
+  )
+)
+
+#' @include aaa.R
+learners[["regr.kknn"]] = LearnerRegrKKNN
+
+```
 
 
 
 
 ```{r}
-group.task
+# Define parameters with default values
+gamma_param <- ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01)
+gamma_param
 
-m.groups <- group.task$groups$group
-#task.dt
-m.groups
+
 ```
-
 
 ```{r}
 learner = lrn("regr.fuser", 
