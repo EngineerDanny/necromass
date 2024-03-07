@@ -67,26 +67,16 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       X <- as.matrix(task$data(cols = task$feature_names))
       y <- as.matrix(task$data(cols = task$target_names))
       k <- as.numeric(length(unique(task$groups$group))) # number of groups
-      
-      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group  
-      n.group
-      #group_ind <- rep(1:k, each=n.group) # group indicators
-      task$groups$group
-
+      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group (for first group)
       # Table of samples per group
       n.groups <- table(task$groups$group)
       n.groups
       
       # Create group indicators
-      group_ind <- unlist(lapply(seq_len(k), function(i) {
-        rep(i, times = n.groups[i])
-      }))
-      
       group_ind <- task$groups$group
       group_ind
 
       G <- matrix(1, k, k) 
-      
       print("k")
       print(k)
       
@@ -104,19 +94,10 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       intercept <- pv$intercept
       scaling <- pv$scaling
   
-      y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
-      
-     
-      
       # Create the matrix with appropriate dimensions
-      #y <- matrix(y, nrow = sum(n.groups), ncol = k, byrow = TRUE)
-      
-      print("got here 1")
-      #print(y)
-
-      
-      
+      y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
+      
       beta.estimate = fusedLassoProximal(X, y, group_ind, 
                                            lambda = lambda, 
                                            G = G, 
@@ -161,10 +142,10 @@ mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-BostonHousing <- BostonHousing[1:200, ]
+BostonHousing <- BostonHousing[1:300, ]
 BostonHousing$chas <- NULL
-#BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
-BostonHousing$sample_group <- sample(1:3, size = nrow(BostonHousing), replace = TRUE)
+BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
+#BostonHousing$sample_group <- sample(1:3, size = nrow(BostonHousing), replace = TRUE)
 
 
 task = TaskRegr$new(id = "boston", 
