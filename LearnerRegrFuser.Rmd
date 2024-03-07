@@ -10,6 +10,34 @@ library(kknn)
 ```
 
 ```{r}
+N <- 300
+abs.x <- 20
+set.seed(1)
+x.vec <- runif(N, -abs.x, abs.x)
+str(x.vec)
+
+library(data.table)
+(task.dt <- data.table(
+  x=x.vec,
+  y = sin(x.vec)+rnorm(N,sd=0.5)))
+
+reg.task <- mlr3::TaskRegr$new("sin", task.dt, target="y")
+
+task.dt[, sample_group := rep(1:3, l=.N)][]
+table(group.tab <- task.dt$sample_group)
+
+(group.task <- reg.task <- mlr3::TaskRegr$new(
+  "sin", task.dt, target="y"
+)$set_col_roles("sample_group",c("group")))
+```
+
+```{r}
+
+
+```
+
+
+```{r}
 
 ordered_features = function(task, learner) {
   cols = names(learner$state$data_prototype)
@@ -23,11 +51,11 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     initialize = function() {
        params = list(
           ParamDbl$new("lambda", lower = 0, upper = 1),
-          ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01),
-          ParamUty$new(id = "groups", default = NULL, tags = ""),
-          ParamUty$new(id = "G", default = NULL, tags = ""),
-          ParamInt$new(id = "k", default = 5, tags = ""),
-          ParamInt$new(id = "n.group", default = 100, tags = "")
+          ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01)
+          #ParamUty$new(id = "groups", default = NULL, tags = ""),
+          #ParamUty$new(id = "G", default = NULL, tags = ""),
+          #ParamInt$new(id = "k", default = 5, tags = ""),
+          #ParamInt$new(id = "n.group", default = 100, tags = "")
         )
       ps = ParamSet$new(params = params)
       super$initialize(
@@ -43,18 +71,29 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     .train = function(task) {
       X = as.matrix(task$data(cols = task$feature_names))
       y = as.matrix(task$data(cols = task$target_names))
+      
+      k <- as.numeric(length(unique(task$groups$group))) # number of groups
+      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group  
+      group_ind = rep(1:k, each=n.group) # group indicators
+      G = matrix(1, k, k) 
+      
+      print("k")
+      print(k)
+      
+      print("n.group")
+      print(n.group)
+      
+      print("G")
+      print(G)
+      
       pv = self$param_set$get_values()
       lambda = pv$lambda
       gamma = pv$gamma
-      groups = pv$groups
-      G = pv$G
-      k = as.integer(pv$k) 
-      n.group = as.integer(pv$n.group)
-      
+  
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
-      beta.estimate = fusedLassoProximal(X, y, groups, 
-                                          lambda = lambda, 
+      beta.estimate = fusedLassoProximal(X, y, group_ind, 
+                                           lambda = lambda, 
                                            tol = 9e-5, 
                                            gamma = gamma,
                                            G = G, 
@@ -66,17 +105,23 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                         formula = task$formula(),
                         data = task$data(),
                         pv = pv,
-                        groups = groups)
+                        groups = group_ind)
       self$model
     },
     .predict = function(task) {
       X = ordered_features(task, self)
       X = as.matrix(task$data(cols = task$feature_names))
       X = apply(X, 2, as.numeric)
-      k = 5
-      n.group = 100
+      k <- as.numeric(length(unique(task$groups$group)))  # number of groups
+      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group  
       # Extract the coefficients and groups from the learner
       beta = self$model$beta
+      print("typeof(beta)")
+      print(typeof(beta))
+      
+      print("beta")
+      print(beta)
+      
       X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
       y.predict = sapply(1:k, function(k.i) X.list[[k.i]] %*% beta[,k.i]) 
       y.predict = c(y.predict)
@@ -87,65 +132,66 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
-k = 5 # number of groups
-n.group = 100 # number of samples per group
-groups = rep(1:k, each=n.group) # group indicators
-G = matrix(1, k, k) 
+
+
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-BostonHousing = BostonHousing[1:500, ]
+BostonHousing <- BostonHousing[1:300, ]
 BostonHousing$chas <- NULL
+BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
+
 task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing, 
-                    target = "medv")
+                    target = "medv")$set_col_roles("sample_group", c("group"))
+learner = lrn("regr.fuser", 
+              lambda = 0.001, 
+              gamma = 0.001 
+              )
+print(learner)
+# Create a learner instance
+learner$train(task)
+
+pred_task = TaskRegr$new(id = "boston", 
+                    backend = BostonHousing[1:210, ], 
+                    target = "medv")$set_col_roles("sample_group", c("group","stratum"))
+learner$predict(pred_task)
+
+
+
+#learner = lrn("regr.fuser", 
+#              lambda = 0.001, 
+#              gamma = 0.001)
+# Create a learner instance
+#learner$train(group.task)
+#learner$predict(group.task)
+
+
+```
+
+
+
+
+
+
+```{r}
+group.task
+
+m.groups <- group.task$groups$group
+#task.dt
+m.groups
+```
+
+
+```{r}
 learner = lrn("regr.fuser", 
               lambda = 0.001, 
               gamma = 0.001, 
               groups = groups, 
               G = G,
               k = k,
-              n.group = n.group
-              )
+              n.group = n.group)
 # Create a learner instance
-learner$train(task)
-learner$predict(task)
-```
-
-```{r}
-N <- 300
-abs.x <- 20
-set.seed(1)
-x.vec <- runif(N, -abs.x, abs.x)
-str(x.vec)
-
-library(data.table)
-(task.dt <- data.table(
-  x=x.vec,
-  y = sin(x.vec)+rnorm(N,sd=0.5)))
-
-reg.task <- mlr3::TaskRegr$new(
-  "sin", task.dt, target="y"
-)
-
-task.dt[, random_group := rep(1:3, l=.N)][]
-table(group.tab <- task.dt$random_group)
-
-(group.task <- reg.task <- mlr3::TaskRegr$new(
-  "sin", task.dt, target="y"
-)$set_col_roles("random_group",c("group","stratum")))
-```
-
-```{r}
-learner = lrn("regr.fuser", 
-              lambda = 0.001, 
-              gamma = 0.001, 
-              groups = groups, 
-              G = G,
-              k = k,
-              n.group = n.group
-              )
-# Create a learner instance
-learner$train(task)
-learner$predict(task)
+learner$train(group.task)
+learner$predict(group.task)
 
 ```
