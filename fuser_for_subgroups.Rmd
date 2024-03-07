@@ -9,7 +9,7 @@ sigma = 0.05 # observation noise sd
 groups = rep(1:k, each=n.group) # group indicators
 
 # sparse linear coefficients
-beta = matrix(0, p, k)
+beta = matrix(0, p, k) 
 nonzero.ind = rbinom(p*k, 1, 0.025/k) # Independent coefficients
 nonzero.shared = rbinom(p, 1, 0.025) # shared coefficients
 beta[which(nonzero.ind==1)] = rnorm(sum(nonzero.ind), 1, 0.25) 

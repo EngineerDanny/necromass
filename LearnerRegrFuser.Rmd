@@ -32,7 +32,6 @@ table(group.tab <- task.dt$sample_group)
 ```
 
 ```{r}
-
 ordered_features = function(task, learner) {
   cols = names(learner$state$data_prototype)
   task$data(cols = intersect(cols, task$feature_names))
@@ -47,7 +46,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
           lambda = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
           gamma = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
           tol = p_dbl(lower = 0, upper = 1, default = 9e-5, tags = "train"),
-          num.it = p_int(lower = 1, upper = 1000000, default = 5000, tags = "train"),
+          num.it = p_int(default = 500, tags = "train"),
           intercept = p_lgl(default = TRUE, tags = "train"),
           scaling = p_lgl(default = FALSE, tags = "train")
        )
@@ -65,13 +64,28 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   ),
   private = list(
     .train = function(task) {
-      X = as.matrix(task$data(cols = task$feature_names))
-      y = as.matrix(task$data(cols = task$target_names))
-      
+      X <- as.matrix(task$data(cols = task$feature_names))
+      y <- as.matrix(task$data(cols = task$target_names))
       k <- as.numeric(length(unique(task$groups$group))) # number of groups
+      
       n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group  
-      group_ind = rep(1:k, each=n.group) # group indicators
-      G = matrix(1, k, k) 
+      n.group
+      #group_ind <- rep(1:k, each=n.group) # group indicators
+      task$groups$group
+
+      # Table of samples per group
+      n.groups <- table(task$groups$group)
+      n.groups
+      
+      # Create group indicators
+      group_ind <- unlist(lapply(seq_len(k), function(i) {
+        rep(i, times = n.groups[i])
+      }))
+      
+      group_ind <- task$groups$group
+      group_ind
+
+      G <- matrix(1, k, k) 
       
       print("k")
       print(k)
@@ -82,15 +96,26 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       print("G")
       print(G)
       
-      pv = self$param_set$get_values(tags = "train")
-      lambda = pv$lambda
-      gamma = pv$gamma
-      tol = pv$tol
-      num.it = pv$num.it
-      intercept = pv$intercept
-      scaling = pv$scaling
+      pv <- self$param_set$get_values(tags = "train")
+      lambda <- pv$lambda
+      gamma <- pv$gamma
+      tol <- pv$tol
+      num.it <- pv$num.it
+      intercept <- pv$intercept
+      scaling <- pv$scaling
   
       y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
+      
+     
+      
+      # Create the matrix with appropriate dimensions
+      #y <- matrix(y, nrow = sum(n.groups), ncol = k, byrow = TRUE)
+      
+      print("got here 1")
+      #print(y)
+
+      
+      
       X = apply(X, 2, as.numeric)
       beta.estimate = fusedLassoProximal(X, y, group_ind, 
                                            lambda = lambda, 
@@ -99,14 +124,17 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                            tol = tol, 
                                            num.it = num.it,
                                            intercept = FALSE,
-                                           scaling = scaling
-                                         ) 
+                                           scaling = scaling) 
+      
+      print("got here 2")
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, 
                         formula = task$formula(),
                         data = task$data(),
                         pv = pv,
                         groups = group_ind)
+      
+      print("got here 2")
       self$model
     },
     .predict = function(task) {
@@ -131,13 +159,13 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
-
-
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-BostonHousing <- BostonHousing[1:300, ]
+BostonHousing <- BostonHousing[1:200, ]
 BostonHousing$chas <- NULL
-BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
+#BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
+BostonHousing$sample_group <- sample(1:3, size = nrow(BostonHousing), replace = TRUE)
+
 
 task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing, 
@@ -146,16 +174,12 @@ learner = lrn("regr.fuser",
               lambda = 0.001, 
               gamma = 0.001
               )
-print(learner)
-# Create a learner instance
 learner$train(task)
 
 pred_task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing[1:210, ], 
                     target = "medv")$set_col_roles("sample_group", c("group","stratum"))
 learner$predict(pred_task)
-
-
 
 #learner = lrn("regr.fuser", 
 #              lambda = 0.001, 
@@ -166,15 +190,6 @@ learner$predict(pred_task)
 ```
 
 
-
-
-```{r}
-# Define parameters with default values
-gamma_param <- ParamDbl$new("gamma", lower = 0, upper = 1, default = 0.01)
-gamma_param
-
-
-```
 
 ```{r}
 learner = lrn("regr.fuser", 
