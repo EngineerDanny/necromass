@@ -66,16 +66,16 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     .train = function(task) {
       X <- as.matrix(task$data(cols = task$feature_names))
       y <- as.matrix(task$data(cols = task$target_names))
+      # Create group indicators
+      group_ind <- task$groups$group
       k <- as.numeric(length(unique(task$groups$group))) # number of groups
-      n.group <- as.numeric(table(task$groups$group)["3"]) # samples per group (for first group)
-      
+      n.group <- min(table(group_ind)) # minimum samples per group across all groups
       max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
       # Table of samples per group
       n.groups <- table(task$groups$group)
       n.groups
       
-      # Create group indicators
-      group_ind <- task$groups$group
+     
       group_ind <- group_ind[1:max_elements]
 
       G <- matrix(1, k, k) 
@@ -138,33 +138,33 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       self$model
     },
   .predict = function(task) {
-      # Order features and convert to matrix
-      X = ordered_features(task, self)
-      X = as.matrix(task$data(cols = task$feature_names))
-      X = apply(X, 2, as.numeric)
-      
-      # Get group indices
-      group_ind <- task$groups$group
-      
-      # Number of groups
-      k <- as.numeric(length(unique(group_ind)))
-      
-      # Extract the coefficients from the learner
-      beta = self$model$beta
-      
-      # Create a list of X matrices, one for each group
-      X.list <- lapply(1:k, function(k.i) {
-        group_rows <- which(group_ind == k.i)
-        X[group_rows, , drop = FALSE]
-      })
-      # Predict response for each group
-      y.predict <- unlist(lapply(1:k, function(k.i) {
-        X.group <- X.list[[k.i]]
-        X.group %*% beta[, k.i]
-      }))
-      # Return the predictions as a numeric vector
-      list(response = y.predict)
-    }
+        # Order features and convert to matrix
+        X = ordered_features(task, self)
+        X = as.matrix(task$data(cols = task$feature_names))
+        X = apply(X, 2, as.numeric)
+        
+        # Get group indices
+        group_ind <- task$groups$group
+        
+        # Number of groups
+        k <- as.numeric(length(unique(group_ind)))
+        
+        # Extract the coefficients from the learner
+        beta = self$model$beta
+        
+        # Initialize a vector to store predictions with the same length as the number of rows in X
+        y.predict <- rep(NA, nrow(X))
+        
+        # Predict response for each group and store in the corresponding positions
+        for (k.i in 1:k) {
+          group_rows <- which(group_ind == k.i)
+          X.group <- X[group_rows, , drop = FALSE]
+          y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
+        }
+        
+        # Return the predictions as a numeric vector
+        list(response = y.predict)
+      }
 
     
     )
