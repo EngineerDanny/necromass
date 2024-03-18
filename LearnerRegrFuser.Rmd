@@ -67,14 +67,16 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       X <- as.matrix(task$data(cols = task$feature_names))
       y <- as.matrix(task$data(cols = task$target_names))
       k <- as.numeric(length(unique(task$groups$group))) # number of groups
-      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group (for first group)
+      n.group <- as.numeric(table(task$groups$group)["3"]) # samples per group (for first group)
+      
+      max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
       # Table of samples per group
       n.groups <- table(task$groups$group)
       n.groups
       
       # Create group indicators
       group_ind <- task$groups$group
-      group_ind
+      group_ind <- group_ind[1:max_elements]
 
       G <- matrix(1, k, k) 
       print("k")
@@ -95,9 +97,26 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       scaling <- pv$scaling
   
       # Create the matrix with appropriate dimensions
-      y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
-      X = apply(X, 2, as.numeric)
+      # Assuming y is your original vector and you have n.group and k defined
       
+      y_trimmed <- y[1:max_elements]  # Select only the first max_elements from y
+      # Now you can create your matrix without a warning
+      y <- matrix(y_trimmed, nrow = n.group, ncol = k, byrow = TRUE)
+
+      #y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
+      print("y")
+      print("ncol")
+      print(ncol(y))
+      print("nrow")
+      print(nrow(y))
+      
+      X = apply(X, 2, as.numeric)
+      print("X")
+      print("ncol")
+      print(ncol(X))
+      print("nrow")
+      print(nrow(X))
+      X <- X[1:max_elements, ]
       beta.estimate = fusedLassoProximal(X, y, group_ind, 
                                            lambda = lambda, 
                                            G = G, 
@@ -118,35 +137,47 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       print("got here 2")
       self$model
     },
-    .predict = function(task) {
+  .predict = function(task) {
+      # Order features and convert to matrix
       X = ordered_features(task, self)
       X = as.matrix(task$data(cols = task$feature_names))
       X = apply(X, 2, as.numeric)
-      k <- as.numeric(length(unique(task$groups$group)))  # number of groups
-      n.group <- as.numeric(table(task$groups$group)["1"]) # samples per group  
-      # Extract the coefficients and groups from the learner
+      
+      # Get group indices
+      group_ind <- task$groups$group
+      
+      # Number of groups
+      k <- as.numeric(length(unique(group_ind)))
+      
+      # Extract the coefficients from the learner
       beta = self$model$beta
-      print("typeof(beta)")
-      print(typeof(beta))
-      print("beta")
-      print(beta)
-      X.list <- lapply(1:k, function(k.i) X[((k.i - 1)*n.group+1):(k.i*n.group), ])
-      y.predict = sapply(1:k, function(k.i) X.list[[k.i]] %*% beta[,k.i]) 
-      y.predict = c(y.predict)
+      
+      # Create a list of X matrices, one for each group
+      X.list <- lapply(1:k, function(k.i) {
+        group_rows <- which(group_ind == k.i)
+        X[group_rows, , drop = FALSE]
+      })
+      # Predict response for each group
+      y.predict <- unlist(lapply(1:k, function(k.i) {
+        X.group <- X.list[[k.i]]
+        X.group %*% beta[, k.i]
+      }))
+      # Return the predictions as a numeric vector
       list(response = y.predict)
     }
-  )
+
+    
+    )
 )
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
 
 # Load the Boston house price dataset
 data("BostonHousing", package = "mlbench")
-BostonHousing <- BostonHousing[1:300, ]
+BostonHousing <- BostonHousing[1:200, ]
 BostonHousing$chas <- NULL
 BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
 #BostonHousing$sample_group <- sample(1:3, size = nrow(BostonHousing), replace = TRUE)
-
 
 task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing, 
@@ -159,8 +190,8 @@ learner$train(task)
 
 pred_task = TaskRegr$new(id = "boston", 
                     backend = BostonHousing[1:210, ], 
-                    target = "medv")$set_col_roles("sample_group", c("group","stratum"))
-learner$predict(pred_task)
+                    target = "medv")$set_col_roles("sample_group", c("group"))
+learner$predict(task)
 
 #learner = lrn("regr.fuser", 
 #              lambda = 0.001, 
