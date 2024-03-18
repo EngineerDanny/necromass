@@ -68,73 +68,33 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       y <- as.matrix(task$data(cols = task$target_names))
       # Create group indicators
       group_ind <- task$groups$group
-      k <- as.numeric(length(unique(task$groups$group))) # number of groups
+      k <- as.numeric(length(unique(group_ind))) # number of groups
       n.group <- min(table(group_ind)) # minimum samples per group across all groups
       max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
-      # Table of samples per group
-      n.groups <- table(task$groups$group)
-      n.groups
-      
-     
       group_ind <- group_ind[1:max_elements]
-
-      G <- matrix(1, k, k) 
-      print("k")
-      print(k)
-      
-      print("n.group")
-      print(n.group)
-      
-      print("G")
-      print(G)
-      
       pv <- self$param_set$get_values(tags = "train")
-      lambda <- pv$lambda
-      gamma <- pv$gamma
-      tol <- pv$tol
-      num.it <- pv$num.it
-      intercept <- pv$intercept
-      scaling <- pv$scaling
-  
       # Create the matrix with appropriate dimensions
       # Assuming y is your original vector and you have n.group and k defined
-      
-      y_trimmed <- y[1:max_elements]  # Select only the first max_elements from y
-      # Now you can create your matrix without a warning
-      y <- matrix(y_trimmed, nrow = n.group, ncol = k, byrow = TRUE)
-
-      #y = matrix(y, nrow = n.group, ncol = k, byrow = TRUE)
-      print("y")
-      print("ncol")
-      print(ncol(y))
-      print("nrow")
-      print(nrow(y))
-      
+      y <- matrix(y[1:max_elements], nrow = n.group, ncol = k, byrow = TRUE)
       X = apply(X, 2, as.numeric)
-      print("X")
-      print("ncol")
-      print(ncol(X))
-      print("nrow")
-      print(nrow(X))
       X <- X[1:max_elements, ]
-      beta.estimate = fusedLassoProximal(X, y, group_ind, 
-                                           lambda = lambda, 
-                                           G = G, 
-                                           gamma = gamma,
-                                           tol = tol, 
-                                           num.it = num.it,
-                                           intercept = FALSE,
-                                           scaling = scaling) 
       
-      print("got here 2")
+      beta.estimate = fusedLassoProximal(X, y, group_ind, 
+                                           lambda = pv$lambda, 
+                                           G = matrix(1, k, k), 
+                                           gamma = pv$gamma,
+                                           tol = pv$tol, 
+                                           num.it = pv$num.it,
+                                           intercept = FALSE,
+                                           scaling = pv$scaling) 
+      
       # Store the coefficients in the learner
       self$model = list(beta = beta.estimate, 
                         formula = task$formula(),
                         data = task$data(),
                         pv = pv,
                         groups = group_ind)
-      
-      print("got here 2")
+  
       self$model
     },
   .predict = function(task) {
@@ -165,8 +125,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
         # Return the predictions as a numeric vector
         list(response = y.predict)
       }
-
-    
     )
 )
 # Register the new learner
