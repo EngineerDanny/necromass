@@ -5,7 +5,6 @@ library(mlr3misc)
 library(fuser)
 library(R6)
 library(paradox)
-library(kknn)
 
 data.list <- list()
 cons.csv.vec <- Sys.glob("/projects/genomic-ml/necromass/data-2023-12-22/*.csv")
@@ -297,9 +296,11 @@ MyResamplingCV = R6::R6Class("MyResamplingCV", inherit = MyResampling,
   )
 )
 
-same_other_cv <- MyResamplingCV$new()
-same_other_cv$param_set$values$folds=5
-same_other_cv$instantiate(task.list[[1]])
+mycv <- MyResamplingCV$new()
+mycv$param_set$values$folds=2
+for(task in task.list){
+  mycv$instantiate(task)
+}
 
 (reg.learner.list <- list(
   mlr3learners::LearnerRegrCVGlmnet$new(),
@@ -310,12 +311,12 @@ same_other_cv$instantiate(task.list[[1]])
 (reg.bench.grid <- mlr3::benchmark_grid(
   task.list,
   reg.learner.list,
-  same_other_cv))
+  mycv))
 
 (debug.grid <- mlr3::benchmark_grid(
   task.list["bacteria.Kaistia"],
   reg.learner.list,
-  same_other_cv))
+  mycv))
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
@@ -336,13 +337,14 @@ batchtools::submitJobs(chunks, resources=list(
   ncpus=1,  #>1 for multicore/parallel jobs.
   ntasks=1, #>1 for MPI jobs.
   chunks.as.arrayjobs=TRUE), reg=reg)
+
 batchtools::getStatus(reg=reg)
 
 jobs.after <- batchtools::getJobTable(reg=reg)
 table(jobs.after$error)
 jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][25:26]
                                                                                  
-## 1:                                            Error in approx(lambda, seq(lambda), sfrac) : \n  need at least two non-NA values to interpolate
+## 1: Error in approx(lambda, seq(lambda), sfrac) : \n  need at least two non-NA values to interpolate
 ## 2: Error in elnet(xd, is.sparse, y, weights, offset, type.gaussian, alpha,  : \n  y is constant; gaussian glmnet fails at standardization step
 ##    task_id
 ## 1: Kaistia
