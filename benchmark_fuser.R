@@ -321,6 +321,7 @@ future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
 reg.dir <- "data-2024-03-28-benchmark-reg"
+reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
   file.dir = reg.dir,
