@@ -8,7 +8,7 @@ library(paradox)
 library(kknn)
 
 data.list <- list()
-cons.csv.vec <- Sys.glob("data-2023-12-22/*.csv")
+cons.csv.vec <- Sys.glob("/projects/genomic-ml/necromass/data-2023-12-22/*.csv")
 for(cons.csv in cons.csv.vec){
   king.dt <- nc::capture_first_vec(cons.csv, "/Dec22_", kingdom="[^_]+")
   data.list[[king.dt$kingdom]] <- fread(cons.csv)[order(Necrobag_ID)]
