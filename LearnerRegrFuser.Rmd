@@ -116,7 +116,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                           groups = group_ind)
       }
     
-      print("complete train function")
+      #print("complete train function")
 
       self$model
     },
@@ -154,7 +154,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                 y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
             }
         }, error = function(e) {
-            warning("Error occurred with beta coefficient prediction. Falling back to glmnet.")
+            #warning("Error occurred with beta coefficient prediction. Falling back to glmnet.")
             glmnet_model <- self$model$glmnet_model
             y.predict <- predict(glmnet_model, newx = X_test)
         })
@@ -204,7 +204,7 @@ fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
 mycv <- MyResamplingCV$new()
 mycv$param_set$values$folds <- 2
 mycv$instantiate(tsk_grp_str)
-mycv$instance
+#mycv$instance
 
 grid.search.5 <- mlr3tuning::TunerGridSearch$new()
 grid.search.5$param_set$values$resolution <- 5
@@ -219,7 +219,7 @@ reg.learner.list <- list(
 
 grouped.task.list = list(tsk_grp_str)
 (same.other.grid <- mlr3::benchmark_grid(
-  grouped.task.list,
+ tsk_grp_str,
   reg.learner.list,
   mycv))
 
@@ -319,7 +319,6 @@ MyResampling = R6::R6Class("Resampling",
         test.fold=fold, test.group=group)]))
       self$instance <- list(
         iteration.dt=data.table(train.groups=c("all","same","other"))[
-        
         , data.table(uniq.fold.groups), by=train.groups][, iteration := .I],
         id.dt=id.fold.groups)
       for(iteration.i in 1:nrow(self$instance$iteration.dt)){
