@@ -1,3 +1,9 @@
+
+```{r}
+file.edit(file.path(Sys.getenv("HOME"), ".Renviron"))
+```
+
+
 ```{r}
 load("data-danny-same-other-cv-01-19.RData")
 library(data.table) 

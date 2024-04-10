@@ -42,6 +42,8 @@ for(data.name in names(data.list)){
 (necro.dt <- do.call(data.table, necro.dt.list))
 
 necro.tall <- melt(necro.dt, measure.vars=names(necro.dt))
+
+if (F){
 library(ggplot2)
 ggplot()+
   geom_histogram(aes(
@@ -54,6 +56,7 @@ ggplot()+
     log10(value+1)),
     data=necro.tall)+
   facet_wrap(~variable)
+}
 
 log.necro.dt <- log10(necro.dt+1)
 
@@ -302,8 +305,13 @@ for(task in task.list){
   mycv$instantiate(task)
 }
 
+#(reg.learner.list <- list(
+#  mlr3learners::LearnerRegrCVGlmnet$new(),
+#  mlr3::LearnerRegrFeatureless$new(),
+#  LearnerRegrFuser$new()
+#))
+
 (reg.learner.list <- list(
-  mlr3learners::LearnerRegrCVGlmnet$new(),
   mlr3::LearnerRegrFeatureless$new(),
   LearnerRegrFuser$new()
   ))
@@ -320,7 +328,7 @@ for(task in task.list){
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
-reg.dir <- "data-2024-03-28-benchmark-reg"
+reg.dir <- "data-2024-04-10-benchmark-reg"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -354,4 +362,4 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
-save(bmr, file="data-2024-03-28-benchmark.RData")
+save(bmr, file="data-2024-04-10-benchmark.RData")
