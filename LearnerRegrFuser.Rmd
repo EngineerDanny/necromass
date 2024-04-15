@@ -9,55 +9,23 @@ library(paradox)
 library(kknn)
 ```
 
-```{r}
-max.x <- 12
-min.x <- -max.x
-fun.list <- list(
-  constant=function(x)1,
-  linear=function(x)x/3,
-  quadratic=function(x)x^2/max.x-5,
-  sin=function(x)4*sin(x),
-  step=function(x)ifelse(x<0, 4, -4))
-N <- 200
-set.seed(1)
-input.vec <- runif(N, min.x, max.x)
-library(data.table)
-task.list <- list()
-sim.dt.list <- list()
-for(fun.name in names(fun.list)){
-  f <- fun.list[[fun.name]]
-  true.vec <- f(input.vec)
-  task.dt <- data.table(
-    input=input.vec,
-    output=true.vec+rnorm(N,sd=2))
-  task.list[[fun.name]] <- mlr3::TaskRegr$new(
-    fun.name, task.dt, target="output"
-  )
-  sim.dt.list[[fun.name]] <- data.table(fun.name, task.dt)
-}
-(sim.dt <- rbindlist(sim.dt.list))
-```
-
-
-
 
 ```{r}
-# Define a new learner class that inherits from LearnerRegr
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
   inherit = LearnerRegr,
   public = list( 
     initialize = function() {
        ps = ps(
-          lambda = p_dbl(0, default = 1, tags = "train"),
-          gamma = p_dbl(0, default = 0, tags = "train"),
-          tol = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
+          lambda = p_dbl(0, default = 0.001, tags = "train"),
+          gamma = p_dbl(0, default = 0.001, tags = "train"),
+          tol = p_dbl(lower = 0, upper = 1, default = 9e-5, tags = "train"),
           num.it = p_int(default = 500, tags = "train"),
-          intercept = p_lgl(default = TRUE, tags = "train"),
+          intercept = p_lgl(default = FALSE, tags = "train"),
           scaling = p_lgl(default = FALSE, tags = "train")
        )
-       ps$values = list(lambda = 0.01, gamma = 0.01, 
-                        tol = 0.01, num.it = 5000,
-                        intercept = TRUE, scaling = FALSE)
+       ps$values = list(lambda = 0.001, gamma = 0.001, 
+                        tol = 9e-5, num.it = 2000,
+                        intercept = FALSE, scaling = FALSE)
        super$initialize(
           id = "regr.fuser",
           param_set = ps,
@@ -71,8 +39,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
     .train = function(task) {
       X_train <- as.matrix(task$data(cols = task$feature_names))
       y_train <- as.matrix(task$data(cols = task$target_names))
-      
-      # Create group indicators
       group_ind <- task$groups$group
       k <- as.numeric(length(unique(group_ind))) # number of groups
       n.group <- min(table(group_ind)) # minimum samples per group across all groups
@@ -82,7 +48,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
       # Create the matrix with appropriate dimensions
       # Assuming y is your original vector and you have n.group and k defined
       y <- matrix(y_train[1:max_elements], nrow = n.group, ncol = k, byrow = TRUE)
-      
       # Check if X has more than one column
       if (ncol(X_train) > 1) {
         X <- apply(X_train, 2, as.numeric)
@@ -91,90 +56,108 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
         X <- head(X_train, max_elements)
       }
       
-     # Check if k = 1, then default to glmnet
-      if (k == 1) {
-        glmnet_model <- glmnet::glmnet(X_train, y_train)
-        self$model = list(glmnet_model = glmnet_model,
-                          formula = task$formula(),
-                          data = task$data(),
-                          pv = pv,
-                          groups = group_ind)
-      } else {
+      # Initialize glmnet_model before tryCatch
+      glmnet_model <- glmnet::glmnet(X_train, y_train)
+      
+      tryCatch({
         # Use fuser::fusedLassoProximal
         beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                           lambda = pv$lambda, 
-                                           G = matrix(1, k, k), 
-                                           gamma = pv$gamma,
-                                           tol = pv$tol, 
-                                           num.it = pv$num.it,
-                                           intercept = FALSE,
-                                           scaling = pv$scaling) 
-        self$model = list(beta = beta.estimate, 
+                                                   lambda = pv$lambda, 
+                                                   G = matrix(1, k, k), 
+                                                   gamma = pv$gamma,
+                                                   tol = pv$tol, 
+                                                   num.it = pv$num.it,
+                                                   intercept = FALSE,
+                                                   scaling = pv$scaling) 
+        # Update self$model with both beta.estimate and glmnet_model
+        self$model <- list(beta = beta.estimate, 
+                           glmnet_model = glmnet_model,
+                           formula = task$formula(),
+                           data = task$data(),
+                           pv = pv,
+                           groups = group_ind)
+        
+      }, error = function(e) {
+        # Update self$model with glmnet_model in case of error
+        self$model <- list(glmnet_model = glmnet_model,
                           formula = task$formula(),
                           data = task$data(),
                           pv = pv,
                           groups = group_ind)
-      }
-    
-      #print("complete train function")
+      })
 
-      self$model
+      
+     self$model
     },
     .predict = function(task) {
-
         ordered_features = function(task, learner) {
           cols = names(learner$state$data_prototype)
           task$data(cols = intersect(cols, task$feature_names))
         }
-        # Order features and convert to matrix
-       # X = ordered_features(task, self)
         X_test = as.matrix(task$data(cols = task$feature_names))
         X = apply(X_test, 2, as.numeric)
-        
-        # Get group indices
         group_ind <- task$groups$group
-        
-        # Number of groups
         k <- as.numeric(length(unique(group_ind)))
-        
-        # Extract the coefficients from the learner
         beta = self$model$beta
-        
-        # Initialize a vector to store predictions with the same length as the number of rows in X
         y.predict <- rep(NA, nrow(X))
         
         # Attempt to predict using coefficients
         tryCatch({
-            # Extract the coefficients from the learner
-            beta <- self$model$beta
-            y.predict <- rep(NA, nrow(X))
-            for (k.i in 1:k) {
-                group_rows <- which(group_ind == k.i)
-                X.group <- X[group_rows, , drop = FALSE]
-                y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
-            }
+          for (k.i in 1:k) {
+            group_rows <- which(group_ind == k.i)
+            X.group <- X[group_rows, , drop = FALSE]
+            y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
+          }
         }, error = function(e) {
-            #warning("Error occurred with beta coefficient prediction. Falling back to glmnet.")
-            glmnet_model <- self$model$glmnet_model
-            y.predict <- predict(glmnet_model, newx = X_test)
+          # If an error occurs, print a warning and leave y.predict as NA
+          warning("Error occurred with beta coefficient prediction: ", e$message)
         })
+        
+        # Check for NAs or errors and use glmnet_model if needed
+        if (any(is.na(y.predict))) {
+          warning("NA values detected in predictions. Falling back to glmnet.")
+          glmnet_model <- self$model$glmnet_model
+          if (!is.null(glmnet_model)) {
+            y.predict <- predict(glmnet_model, newx = X_test, s = c(0.01, 0.005))
+            y.predict <- y.predict[, 1]
+          } else {
+            stop("glmnet model is NULL. Unable to make predictions.")
+          }
+        }
         
         # Return the predictions as a numeric vector
         list(response = y.predict)
       }
+
     )
 )
-
 # Register the new learner
 mlr_learners$add("regr.fuser", LearnerRegrFuser)
-learner = lrn("regr.fuser", 
-              lambda = 0.001, 
-              gamma = 0.001)
-# Create a learner instance
-learner$train(group.task)
-learner$predict(group.task)
+learner = lrn("regr.fuser")
 ```
 
+
+```{r}
+# Load the Boston house price dataset
+data("BostonHousing", package = "mlbench")
+BostonHousing <- BostonHousing[1:200, ]
+BostonHousing$chas <- NULL
+BostonHousing$sample_group <- rep(1:3, length.out = nrow(BostonHousing))
+#BostonHousing$sample_group <- sample(1:3, size = nrow(BostonHousing), replace = TRUE)
+
+task = TaskRegr$new(id = "boston", 
+                    backend = BostonHousing, 
+                    target = "medv")$set_col_roles("sample_group", c("group"))
+learner = lrn("regr.fuser")
+learner$train(task)
+
+pred_task = TaskRegr$new(id = "boston", 
+                    backend = BostonHousing, 
+                    target = "medv")$set_col_roles("sample_group", c("group"))
+pred_dt <-  learner$predict(pred_task)
+
+plot(truth ~ response, as.data.table(pred_dt)  )
+```
 
 
 
@@ -187,7 +170,7 @@ set.seed(1)
 x.mat <- matrix(runif(N * 3, -abs.x, abs.x), ncol = 3)  # Ensure X has more than two features
 colnames(x.mat) <- paste0("feature", 1:3)
 (task.dt <- data.table(
-  x = x.mat,
+  x = x.mat, 
   y = sin(rowSums(x.mat)) + rnorm(N, sd = 0.5)
 ))
 task.dt[, sample_group := rep(1:3, length.out = .N)]
@@ -203,7 +186,7 @@ fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
 
 mycv <- MyResamplingCV$new()
 mycv$param_set$values$folds <- 2
-mycv$instantiate(tsk_grp_str)
+#mycv$instantiate(tsk_grp_str)
 #mycv$instance
 
 grid.search.5 <- mlr3tuning::TunerGridSearch$new()
@@ -215,7 +198,7 @@ fuser.learner.tuned <- mlr3tuning::auto_tuner(
   measure = mlr3::msr("regr.mse"))
 
 reg.learner.list <- list(
-  mlr3::LearnerRegrFeatureless$new(), lrn("regr.fuser"))
+  mlr3::LearnerRegrFeatureless$new(), fuser.learner.tuned)
 
 grouped.task.list = list(tsk_grp_str)
 (same.other.grid <- mlr3::benchmark_grid(
@@ -227,6 +210,8 @@ if(require(future))plan("multisession")
 bench.result <- mlr3::benchmark(same.other.grid, store_models = TRUE)
 bench.result
 #save(bench.result, file=cache.RData)
+
+options(warn=2)
 ```
 
 

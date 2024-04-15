@@ -1,4 +1,37 @@
 ```{r}
+score.dt <- mlr3resampling::score(bmr)
+library(data.table)
+score.wide <- dcast(
+  score.dt,
+  train.groups + test.fold + test.group + task_id ~ algorithm,
+  value.var="regr.mse")
+score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
+score.wide[is.na(fuser), fuser := featureless]
+score.tall <- melt(
+  score.wide,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+
+library(ggplot2)
+gg <- ggplot()+
+  geom_text(aes(
+    regr.mse, train.groups, label=train.groups),
+    vjust=-0.5,
+    hjust=1,
+    data=data.table(regr.mse=Inf, train.groups=c("same","other","all")))+
+  geom_point(aes(
+    regr.mse, train.groups, color=algorithm),
+    shape=1,
+    data=score.tall)+
+  facet_grid(test.group ~ task_id, scales="free")+
+  scale_x_log10()
+
+ggsave("fuser_results_2.png", plot = gg, width = 50, height = 5, dpi = 200, limitsize = FALSE)
+```
+
+
+```{r}
 load("data-danny-same-other-cv-01-19.RData")
 library(data.table) 
 library(ggplot2)
@@ -8,6 +41,7 @@ score.wide <- dcast(
   score.dt,
   train.groups + test.fold + test.group + task_id ~ algorithm,
   value.var="regr.mse")
+
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
 score.tall <- melt(
   score.wide,
@@ -106,7 +140,7 @@ score.tall_filtered_new <- score.tall_filtered
 score.tall_filtered_new$test.group <- factor(score.tall_filtered_new$test.group,
                                              levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
 score.tall_filtered_new$algorithm <- factor(score.tall_filtered_new$algorithm,
-                                             levels = c("LogisticRegressionCV", "FeaturelessClassifier"))
+                                             levels = c("LogisticRegresssionCV", "FeaturelessClassifier"))
 gg <- ggplot()+
   geom_line(aes(
     FPR, TPR, color=algorithm),

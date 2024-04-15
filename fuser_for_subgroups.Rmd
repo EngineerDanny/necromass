@@ -33,16 +33,15 @@ library(ggplot2)
 # Same for all pairs in this example
 G = matrix(1, k, k) 
 
-# Use L1 fusion to estimate betas (with near-optimal sparsity and 
-# information sharing among groups)
-beta.estimate = fusedLassoProximal(X, y, groups, lambda=0.001, tol=9e-5, 
-                                   gamma=0.001, G, intercept=FALSE,
-                                   num.it=2000) 
+
+
 ```
 
 
 ```{r}
-beta.estimate = fusedLassoProximal(X, y, groups, lambda=0.01, tol=9e-5, 
+# Use L1 fusion to estimate betas (with near-optimal sparsity and 
+# information sharing among groups)
+beta.estimate = fusedLassoProximal(X, y, groups, lambda=0.001, tol=9e-5, 
                                    gamma=0.001, G, intercept=FALSE,
                                    num.it=2000, c.flag=TRUE) 
 
@@ -58,13 +57,10 @@ ggplot(plotting.frame, aes(x=Beta.True, y=Beta.Estimate, colour=Group)) +
   annotate('text', x=0.5,y=1, label=paste('Pearson Cor.:', correlation))
 ```
 
-
 ```{r}
 # Predict response based on estimated betas
 y.predict = sapply(1:k, function(k.i) X.test[[k.i]] %*% beta.estimate[,k.i]) 
-```
 
-```{r}
 plotting.frame = data.frame(Y.Test=c(y.test),
                             Y.Predict=c(y.predict),
                             Group=factor(rep(1:k, each=n.group)))
