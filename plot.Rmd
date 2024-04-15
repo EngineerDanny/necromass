@@ -1,3 +1,9 @@
+
+```{r}
+file.edit(file.path(Sys.getenv("HOME"), ".Renviron"))
+```
+
+
 ```{r}
 score.dt <- mlr3resampling::score(bmr)
 library(data.table)

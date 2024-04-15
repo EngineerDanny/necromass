@@ -42,6 +42,8 @@ for(data.name in names(data.list)){
 (necro.dt <- do.call(data.table, necro.dt.list))
 
 necro.tall <- melt(necro.dt, measure.vars=names(necro.dt))
+
+if (F){
 library(ggplot2)
 ggplot()+
   geom_histogram(aes(
@@ -54,6 +56,7 @@ ggplot()+
     log10(value+1)),
     data=necro.tall)+
   facet_wrap(~variable)
+}
 
 log.necro.dt <- log10(necro.dt+1)
 
@@ -69,107 +72,126 @@ for(out.i in 1:ncol(log.necro.dt)){
 
 
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
-  inherit = LearnerRegr,
-  public = list( 
-    initialize = function() {
-       ps = ps(
-          lambda = p_dbl(0, default = 1, tags = "train"),
-          gamma = p_dbl(0, default = 0, tags = "train"),
-          tol = p_dbl(lower = 0, upper = 1, default = 0.01, tags = "train"),
-          num.it = p_int(default = 500, tags = "train"),
-          intercept = p_lgl(default = TRUE, tags = "train"),
-          scaling = p_lgl(default = FALSE, tags = "train")
-       )
-       ps$values = list(lambda = 0.01, gamma = 0.01, 
-                        tol = 0.01, num.it = 5000,
-                        intercept = TRUE, scaling = FALSE)
-       super$initialize(
-          id = "regr.fuser",
-          param_set = ps,
-          feature_types = c("logical", "integer", "numeric"),
-          label = "Fuser",
-          packages = c("mlr3learners", "fuser")
-       )
-    }
-  ),
-  private = list(
-    .train = function(task) {
-      X_train <- as.matrix(task$data(cols = task$feature_names))
-      y_train <- as.matrix(task$data(cols = task$target_names))
-      group_ind <- task$groups$group
-      k <- as.numeric(length(unique(group_ind))) # number of groups
-      n.group <- min(table(group_ind)) # minimum samples per group across all groups
-      max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
-      group_ind <- group_ind[1:max_elements]
-      pv <- self$param_set$get_values(tags = "train")
-      # Create the matrix with appropriate dimensions
-      # Assuming y is your original vector and you have n.group and k defined
-      y <- matrix(y_train[1:max_elements], nrow = n.group, ncol = k, byrow = TRUE)
-      # Check if X has more than one column
-      if (ncol(X_train) > 1) {
-        X <- apply(X_train, 2, as.numeric)
-        X <- X[1:max_elements, ]
-      } else {
-        X <- head(X_train, max_elements)
-      }
-     # Check if k = 1, then default to glmnet
-      if (k == 1) {
-        glmnet_model <- glmnet::glmnet(X_train, y_train)
-        self$model = list(glmnet_model = glmnet_model,
-                          formula = task$formula(),
-                          data = task$data(),
-                          pv = pv,
-                          groups = group_ind)
-      } else {
-        # Use fuser::fusedLassoProximal
-        beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                           lambda = pv$lambda, 
-                                           G = matrix(1, k, k), 
-                                           gamma = pv$gamma,
-                                           tol = pv$tol, 
-                                           num.it = pv$num.it,
-                                           intercept = FALSE,
-                                           scaling = pv$scaling) 
-        self$model = list(beta = beta.estimate, 
-                          formula = task$formula(),
-                          data = task$data(),
-                          pv = pv,
-                          groups = group_ind)
-      }
-
-      self$model
-    },
-    .predict = function(task) {
-        ordered_features = function(task, learner) {
-          cols = names(learner$state$data_prototype)
-          task$data(cols = intersect(cols, task$feature_names))
-        }
-        X_test = as.matrix(task$data(cols = task$feature_names))
-        X = apply(X_test, 2, as.numeric)
-        group_ind <- task$groups$group
-        k <- as.numeric(length(unique(group_ind)))
-        beta = self$model$beta
-        y.predict <- rep(NA, nrow(X))
-        # Attempt to predict using coefficients
-        tryCatch({
-            # Extract the coefficients from the learner
-            beta <- self$model$beta
-            y.predict <- rep(NA, nrow(X))
-            for (k.i in 1:k) {
-                group_rows <- which(group_ind == k.i)
-                X.group <- X[group_rows, , drop = FALSE]
-                y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
-            }
-        }, error = function(e) {
-            #warning("Error occurred with beta coefficient prediction. Falling back to glmnet.")
-            glmnet_model <- self$model$glmnet_model
-            y.predict <- predict(glmnet_model, newx = X_test)
-        })
-        # Return the predictions as a numeric vector
-        list(response = y.predict)
-      }
-    )
+                            inherit = LearnerRegr,
+                            public = list( 
+                              initialize = function() {
+                                ps = ps(
+                                  lambda = p_dbl(0, default = 0.001, tags = "train"),
+                                  gamma = p_dbl(0, default = 0.001, tags = "train"),
+                                  tol = p_dbl(lower = 0, upper = 1, default =  9e-5, tags = "train"),
+                                  num.it = p_int(default = 500, tags = "train"),
+                                  intercept = p_lgl(default = FALSE, tags = "train"),
+                                  scaling = p_lgl(default = FALSE, tags = "train")
+                                )
+                                ps$values = list(lambda = 0.001, gamma = 0.001, 
+                                                 tol = 9e-5, num.it = 5000,
+                                                 intercept = FALSE, scaling = FALSE)
+                                super$initialize(
+                                  id = "regr.fuser",
+                                  param_set = ps,
+                                  feature_types = c("logical", "integer", "numeric"),
+                                  label = "Fuser",
+                                  packages = c("mlr3learners", "fuser")
+                                )
+                              }
+                            ),
+                            private = list(
+                              .train = function(task) {
+                                X_train <- as.matrix(task$data(cols = task$feature_names))
+                                y_train <- as.matrix(task$data(cols = task$target_names))
+                                group_ind <- task$groups$group
+                                k <- as.numeric(length(unique(group_ind))) # number of groups
+                                n.group <- min(table(group_ind)) # minimum samples per group across all groups
+                                max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
+                                group_ind <- group_ind[1:max_elements]
+                                pv <- self$param_set$get_values(tags = "train")
+                                # Create the matrix with appropriate dimensions
+                                # Assuming y is your original vector and you have n.group and k defined
+                                y <- matrix(y_train[1:max_elements], nrow = n.group, ncol = k, byrow = TRUE)
+                                # Check if X has more than one column
+                                if (ncol(X_train) > 1) {
+                                  X <- apply(X_train, 2, as.numeric)
+                                  X <- X[1:max_elements, ]
+                                } else {
+                                  X <- head(X_train, max_elements)
+                                }
+                                
+                                # Initialize glmnet_model before tryCatch
+                                glmnet_model <- glmnet::glmnet(X_train, y_train)
+                                
+                                tryCatch({
+                                  # Use fuser::fusedLassoProximal
+                                  beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
+                                                                             lambda = pv$lambda, 
+                                                                             G = matrix(1, k, k), 
+                                                                             gamma = pv$gamma,
+                                                                             tol = pv$tol, 
+                                                                             num.it = pv$num.it,
+                                                                             intercept = FALSE,
+                                                                             scaling = pv$scaling) 
+                                  # Update self$model with both beta.estimate and glmnet_model
+                                  self$model <- list(beta = beta.estimate, 
+                                                     glmnet_model = glmnet_model,
+                                                     formula = task$formula(),
+                                                     data = task$data(),
+                                                     pv = pv,
+                                                     groups = group_ind)
+                                  
+                                }, error = function(e) {
+                                  # Update self$model with glmnet_model in case of error
+                                  self$model <- list(glmnet_model = glmnet_model,
+                                                     formula = task$formula(),
+                                                     data = task$data(),
+                                                     pv = pv,
+                                                     groups = group_ind)
+                                })
+                                
+                                
+                                self$model
+                              },
+                              .predict = function(task) {
+                                ordered_features = function(task, learner) {
+                                  cols = names(learner$state$data_prototype)
+                                  task$data(cols = intersect(cols, task$feature_names))
+                                }
+                                X_test = as.matrix(task$data(cols = task$feature_names))
+                                X = apply(X_test, 2, as.numeric)
+                                group_ind <- task$groups$group
+                                k <- as.numeric(length(unique(group_ind)))
+                                beta = self$model$beta
+                                y.predict <- rep(NA, nrow(X))
+                                
+                                # Attempt to predict using coefficients
+                                tryCatch({
+                                  for (k.i in 1:k) {
+                                    group_rows <- which(group_ind == k.i)
+                                    X.group <- X[group_rows, , drop = FALSE]
+                                    y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
+                                  }
+                                }, error = function(e) {
+                                  # If an error occurs, print a warning and leave y.predict as NA
+                                  warning("Error occurred with beta coefficient prediction: ", e$message)
+                                })
+                                
+                                # Check for NAs or errors and use glmnet_model if needed
+                                if (any(is.na(y.predict))) {
+                                  warning("NA values detected in predictions. Falling back to glmnet.")
+                                  glmnet_model <- self$model$glmnet_model
+                                  if (!is.null(glmnet_model)) {
+                                    y.predict <- predict(glmnet_model, newx = X_test, s = c(0.01, 0.005))
+                                    y.predict <- y.predict[, 1]
+                                  } else {
+                                    stop("glmnet model is NULL. Unable to make predictions.")
+                                  }
+                                }
+                                
+                                # Return the predictions as a numeric vector
+                                list(response = y.predict)
+                              }
+                              
+                            )
 )
+
 
 MyResampling = R6::R6Class("Resampling",
   public = list(
@@ -306,7 +328,11 @@ for(task in task.list){
   mlr3learners::LearnerRegrCVGlmnet$new(),
   mlr3::LearnerRegrFeatureless$new(),
   LearnerRegrFuser$new()
-  ))
+))
+
+#(reg.learner.list <- list(
+#  LearnerRegrFuser$new()
+#))
 
 (reg.bench.grid <- mlr3::benchmark_grid(
   task.list,
@@ -320,7 +346,7 @@ for(task in task.list){
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
-reg.dir <- "data-2024-03-28-benchmark-reg"
+reg.dir <- "data-2024-04-13-benchmark-reg"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -334,7 +360,7 @@ job.table <- batchtools::getJobTable(reg=reg)
 chunks <- data.frame(job.table, chunk=1)
 batchtools::submitJobs(chunks, resources=list(
   walltime = 60*60,#seconds
-  memory = 4000,#megabytes per cpu
+  memory = 2000,#megabytes per cpu
   ncpus=1,  #>1 for multicore/parallel jobs.
   ntasks=1, #>1 for MPI jobs.
   chunks.as.arrayjobs=TRUE), reg=reg)
@@ -352,6 +378,13 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 ## 2: Kaistia
 
 
+
+
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
-save(bmr, file="data-2024-03-28-benchmark.RData")
+save(bmr, file="data-2024-04-13-benchmark.RData")
+
+# search for predictions with NAs
+tab = as.data.table(bmr)
+tab[map_lgl(tab$prediction, function(pred) any(is.na(pred$response)))]
+tab$prediction
