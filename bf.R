@@ -100,16 +100,52 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 X_train <- as.matrix(task$data(cols = task$feature_names))
                                 y_train <- as.matrix(task$data(cols = task$target_names))
                                 group_ind <- task$groups$group
+                                k <- as.numeric(length(unique(group_ind))) # number of groups
+                                n.group <- min(table(group_ind)) # minimum samples per group across all groups
+                                max_elements <- n.group * k  # Calculate the maximum number of elements to fit the matrix
+                                group_ind <- group_ind[1:max_elements]
                                 pv <- self$param_set$get_values(tags = "train")
-                            
+                                # Create the matrix with appropriate dimensions
+                                # Assuming y is your original vector and you have n.group and k defined
+                                y <- matrix(y_train[1:max_elements], nrow = n.group, ncol = k, byrow = TRUE)
+                                # Check if X has more than one column
+                                if (ncol(X_train) > 1) {
+                                  X <- apply(X_train, 2, as.numeric)
+                                  X <- X[1:max_elements, ]
+                                } else {
+                                  X <- head(X_train, max_elements)
+                                }
                                 
                                 # Initialize glmnet_model before tryCatch
-                                glmnet_model <- glmnet::cv.glmnet(X_train, y_train, grouped = FALSE)
-                                self$model <- list(glmnet_model = glmnet_model,
-                                                   formula = task$formula(),
-                                                   data = task$data(),
-                                                   pv = pv,
-                                                   groups = group_ind)
+                                glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
+                                
+                                tryCatch({
+                                  # Use fuser::fusedLassoProximal
+                                  beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
+                                                                             lambda = pv$lambda, 
+                                                                             G = matrix(1, k, k), 
+                                                                             gamma = pv$gamma,
+                                                                             tol = pv$tol, 
+                                                                             num.it = pv$num.it,
+                                                                             intercept = FALSE,
+                                                                             scaling = pv$scaling) 
+                                  # Update self$model with both beta.estimate and glmnet_model
+                                  self$model <- list(beta = beta.estimate, 
+                                                     glmnet_model = glmnet_model,
+                                                     formula = task$formula(),
+                                                     data = task$data(),
+                                                     pv = pv,
+                                                     groups = group_ind)
+                                  
+                                }, error = function(e) {
+                                  # Update self$model with glmnet_model in case of error
+                                  self$model <- list(glmnet_model = glmnet_model,
+                                                     formula = task$formula(),
+                                                     data = task$data(),
+                                                     pv = pv,
+                                                     groups = group_ind)
+                                })
+                                
                                 self$model
                               },
                               .predict = function(task) {
@@ -124,18 +160,29 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 beta = self$model$beta
                                 y.predict <- rep(NA, nrow(X))
                                 
-                                glmnet_model <- self$model$glmnet_model
-                                if (!is.null(glmnet_model)) {
-                                  y.predict <- predict(glmnet_model, newx = X_test, s = "lambda.min")
+                                # Attempt to predict using coefficients
+                                tryCatch({
+                                  for (k.i in 1:k) {
+                                    group_rows <- which(group_ind == k.i)
+                                    X.group <- X[group_rows, , drop = FALSE]
+                                    y.predict[group_rows] <- as.numeric(X.group %*% beta[, k.i])
+                                  }
+                                }, error = function(e) {
+                                  # If an error occurs, print a warning and leave y.predict as NA
+                                  warning("Error occurred with beta coefficient prediction: ", e$message)
+                                })
+                                
+                                # Check for NAs or errors and use glmnet_model if needed
+                                if (any(is.na(y.predict))) {
+                                  warning("NA values detected in predictions. Falling back to glmnet.")
+                                  glmnet_model <- self$model$glmnet_model
+                                  y.predict <- predict(glmnet_model, newx = X_test)
                                   y.predict <- as.vector(y.predict)
-                                } else {
-                                  stop("glmnet model is NULL. Unable to make predictions.")
                                 }
                                 
                                 # Return the predictions as a numeric vector
                                 list(response = y.predict)
                               }
-                              
                             )
 )
 
@@ -306,8 +353,8 @@ mlr3batchmark::batchmark(
 job.table <- batchtools::getJobTable(reg=reg)
 chunks <- data.frame(job.table, chunk=1)
 batchtools::submitJobs(chunks, resources=list(
-  walltime = 60*60,#seconds
-  memory = 2000,#megabytes per cpu
+  walltime = 60*5,#seconds
+  memory = 512,#megabytes per cpu
   ncpus=1,  #>1 for multicore/parallel jobs.
   ntasks=1, #>1 for MPI jobs.
   chunks.as.arrayjobs=TRUE), reg=reg)
