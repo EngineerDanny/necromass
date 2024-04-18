@@ -33,7 +33,7 @@ gg <- ggplot()+
   facet_grid(test.group ~ task_id, scales="free")+
   scale_x_log10()
 
-ggsave("fuser_results_2.png", plot = gg, width = 50, height = 5, dpi = 200, limitsize = FALSE)
+ggsave("fuser_results_7.png", plot = gg, width = 50, height = 5, dpi = 200, limitsize = FALSE)
 ```
 
 
