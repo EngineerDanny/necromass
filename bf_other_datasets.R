@@ -315,8 +315,3 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
 save(bmr, file="movingpictures-2024-04-18-benchmark.RData")
-
-# search for predictions with NAs
-tab = as.data.table(bmr)
-tab[map_lgl(tab$prediction, function(pred) any(is.na(pred$response)))]
-tab$prediction
