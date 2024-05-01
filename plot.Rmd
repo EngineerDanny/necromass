@@ -9,31 +9,35 @@ score.dt <- mlr3resampling::score(bmr)
 library(data.table)
 score.wide <- dcast(
   score.dt,
-  train.groups + test.fold + test.group + task_id ~ algorithm,
+  train.subsets + test.fold + test.subset + task_id ~ algorithm,
   value.var="regr.mse")
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
-score.wide[is.na(fuser), fuser := featureless]
+score.wide[is.na(tuned), tuned := featureless]
 score.tall <- melt(
   score.wide,
-  measure=c("fuser", "cv_glmnet", "featureless"),
+  measure=c("tuned", "cv_glmnet", "featureless"),
   variable.name="algorithm",
   value.name="regr.mse")
 
 library(ggplot2)
 gg <- ggplot()+
   geom_text(aes(
-    regr.mse, train.groups, label=train.groups),
+    regr.mse, train.subsets, label=train.subsets),
     vjust=-0.5,
     hjust=1,
-    data=data.table(regr.mse=Inf, train.groups=c("same","other","all")))+
+    data=data.table(regr.mse=Inf, train.subsets=c("same","other","all")))+
   geom_point(aes(
-    regr.mse, train.groups, color=algorithm),
+    regr.mse, train.subsets, color=algorithm),
     shape=1,
     data=score.tall)+
-  facet_grid(test.group ~ task_id, scales="free")+
+  facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()
 
-ggsave("fuser_results_2.png", plot = gg, width = 50, height = 5, dpi = 200, limitsize = FALSE)
+ggsave("tuned_moving_pictures_results_6.png", plot = gg, 
+       width = 50, height = 5, dpi = 200, limitsize = FALSE)
+
+#ggsave("necromass_5.png", plot = gg, 
+ #      width = 50, height = 5, dpi = 200, limitsize = FALSE)
 ```
 
 
@@ -45,7 +49,7 @@ library(ggplot2)
 
 score.wide <- dcast(
   score.dt,
-  train.groups + test.fold + test.group + task_id ~ algorithm,
+  train.subsets + test.fold + test.subset + task_id ~ algorithm,
   value.var="regr.mse")
 
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
@@ -59,24 +63,24 @@ score.tall <- melt(
 score.tall_filtered <- score.tall[task_id %in% c("Absidia", "Amphinema", "Bradyrhizobium", 
                                                  "Burkholderia", "Cellvibrio", "Cenococcum", "Chaetomium"), ]
 
-score.tall_filtered <- score.tall_filtered[train.groups %in% c("all"), ]
+score.tall_filtered <- score.tall_filtered[train.subsets %in% c("all"), ]
 
-# Group by train.groups, test.fold, task_id, algorithm and find mean of regr.mse
-score.tall_filtered_mean <- score.tall_filtered[, .(regr.mse = mean(regr.mse)), by = .(train.groups, test.fold, task_id, algorithm)]
-score.tall_filtered_mean_new <- setcolorder(score.tall_filtered_mean[, test.group := "All Samples"], c("train.groups", "test.fold", "test.group", "task_id", "algorithm", "regr.mse"))
+# Group by train.subsets, test.fold, task_id, algorithm and find mean of regr.mse
+score.tall_filtered_mean <- score.tall_filtered[, .(regr.mse = mean(regr.mse)), by = .(train.subsets, test.fold, task_id, algorithm)]
+score.tall_filtered_mean_new <- setcolorder(score.tall_filtered_mean[, test.subset := "All Samples"], c("train.subsets", "test.fold", "test.subset", "task_id", "algorithm", "regr.mse"))
 
 # Row combine score.tall_filtered and score.tall_filtered_mean
 score.tall_filtered_new <- rbindlist(list(score.tall_filtered, score.tall_filtered_mean))
 
-score.tall_filtered_new$test.group <- factor(score.tall_filtered_new$test.group,
+score.tall_filtered_new$test.subset <- factor(score.tall_filtered_new$test.subset,
                                              levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
 
 gg <- ggplot()+
   geom_point(aes(
-    regr.mse, train.groups, color=algorithm),
+    regr.mse, train.subsets, color=algorithm),
     shape=1,
     data=score.tall_filtered_new)+
-  facet_grid(test.group ~ task_id, scales="free")+
+  facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()
 #png("data-danny-same-other-cv-figure-01-19.png", height=5, width=60, units="in", res=100)
 png("data-danny-same-other-cv-figure-02-06_01.png", height=5, width=13, units="in", res=200)
@@ -91,17 +95,17 @@ library(ggplot2)
 score.tall_filtered <- fread("~/Desktop/necromass/necromass_debug/necromass_debug/2024-02-06_15:45_reg_results_R.csv")
 score.tall_filtered_new <- score.tall_filtered[task_id %in% c("Absidia", "Amphinema", "Bradyrhizobium", 
                                                  "Burkholderia", "Cellvibrio", "Cenococcum", "Chaetomium"), ]
-score.tall_filtered_new$test.group <- factor(score.tall_filtered_new$test.group,
+score.tall_filtered_new$test.subset <- factor(score.tall_filtered_new$test.subset,
                                              levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
 score.tall_filtered_new$algorithm <- factor(score.tall_filtered_new$algorithm,
                                              levels = c("LassoCV",  "LogisticRegLassoCV", "Featureless"))
 
 gg <- ggplot()+
   geom_point(aes(
-    regr.mse, train.groups, color=algorithm),
+    regr.mse, train.subsets, color=algorithm),
     shape=1,
     data=score.tall_filtered_new) +
-  facet_grid(test.group ~ task_id, scales="free")+
+  facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()
 png("data-danny-same-other-cv-figure-02-09_15:45.png", height=5, width=13, units="in", res=200)
 print(gg)
@@ -116,16 +120,16 @@ library(ggplot2)
 score.tall_filtered <- fread("~/Desktop/necromass/necromass_debug/necromass_debug/2024-02-09_11:36_classification_results_R.csv")
 score.tall_filtered_new <- score.tall_filtered[task_id %in% c("Absidia", "Amphinema", "Bradyrhizobium", 
                                                  "Burkholderia", "Cellvibrio", "Cenococcum", "Chaetomium"), ]
-score.tall_filtered_new$test.group <- factor(score.tall_filtered_new$test.group,
+score.tall_filtered_new$test.subset <- factor(score.tall_filtered_new$test.subset,
                                              levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
 score.tall_filtered_new$algorithm <- factor(score.tall_filtered_new$algorithm,
                                              levels = c("LogisticRegressionCV", "FeaturelessClassifier"))
 gg <- ggplot()+
   geom_point(aes(
-    accuracy, train.groups, color=algorithm),
+    accuracy, train.subsets, color=algorithm),
     shape=1,
     data=score.tall_filtered_new)+
-  facet_grid(test.group ~ task_id, scales="free")+
+  facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()+
   scale_x_reverse() # reverse x-axis scale
 #png("data-danny-same-other-cv-figure-01-19.png", height=5, width=60, units="in", res=100)
@@ -143,7 +147,7 @@ score.tall_filtered <- fread("2024-02-09_11_36_results_roc_R.csv")
 #score.tall_filtered_new <- score.tall_filtered[task_id %in% c("Absidia", "Amphinema", "Bradyrhizobium", 
 #                                                "Burkholderia", "Cellvibrio", "Cenococcum", "Chaetomium"), ]
 score.tall_filtered_new <- score.tall_filtered
-score.tall_filtered_new$test.group <- factor(score.tall_filtered_new$test.group,
+score.tall_filtered_new$test.subset <- factor(score.tall_filtered_new$test.subset,
                                              levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
 score.tall_filtered_new$algorithm <- factor(score.tall_filtered_new$algorithm,
                                              levels = c("LogisticRegresssionCV", "FeaturelessClassifier"))
@@ -152,7 +156,7 @@ gg <- ggplot()+
     FPR, TPR, color=algorithm),
     #shape=1,
     data=score.tall_filtered_new)+
-  facet_grid(test.group ~ task_id, scales="free")
+  facet_grid(test.subset ~ task_id, scales="free")
 # reverse x-axis scale
 #png("data-danny-same-other-cv-figure-01-19.png", height=5, width=60, units="in", res=100)
 png("data-danny-same-other-cv-figure-02-12.png", height=5, width=13, units="in", res=200)
@@ -164,8 +168,8 @@ dev.off()
 ## TODO compute p-value for difference between cv_glmnet and featureless
 gg2 <- ggplot()+
   geom_point(aes(
-    cv_glmnet-featureless, train.groups),
+    cv_glmnet-featureless, train.subsets),
     data=score.wide)+
-  facet_grid(. ~ test.group, labeller=label_both)
+  facet_grid(. ~ test.subset, labeller=label_both)
 print(gg2)
 ```
