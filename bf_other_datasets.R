@@ -113,8 +113,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   
                                   # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
                                   beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
-                                                                       transformed.data$Y, group_ind, lambda=0.01,
-                                                                       gamma=0.01)
+                                                                       transformed.data$Y, group_ind, lambda=pv$lambda,
+                                                                       gamma=pv$gamma)
                                   
                                 
                                   #colnames(beta.estimate) = as.character(sort(unique(group_ind)))
@@ -261,8 +261,8 @@ fuser.learner.tuned = mlr3tuning::auto_tuner(
 reg.learner.list <- list(
   mlr3learners::LearnerRegrGlmnet$new(),
   mlr3::LearnerRegrFeatureless$new(), 
-  #fuser.learner.tuned
-  LearnerRegrFuser$new()
+  fuser.learner.tuned
+  #LearnerRegrFuser$new()
 )
 
 (debug.grid <- mlr3::benchmark_grid(
