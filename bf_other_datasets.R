@@ -109,35 +109,26 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 tryCatch({
                                   # Use fuser::fusedLassoProximal
                                   # Generate block diagonal matrices for L2 fusion approach
-                                  transformed.data = generateBlockDiagonalMatrices(X, y, group_ind, matrix(1, k, k))
-                                  
+                                  # transformed.data = generateBlockDiagonalMatrices(X, y, group_ind, matrix(1, k, k))
                                   # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
-                                  beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
-                                                                       transformed.data$Y, group_ind, lambda=pv$lambda,
-                                                                       gamma=pv$gamma)
+                                  # beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
+                                  #                                     transformed.data$Y, group_ind, lambda=pv$lambda,
+                                  #                                     gamma=pv$gamma)
+                                  # colnames(beta.estimate) = as.character(sort(unique(group_ind)))
+                                  # beta.estimate = beta.estimate[,,1]
+                                  # colnames(beta.estimate) = as.character(sort(unique(group_ind)))
+                                  # print("beta.estimate")
+                                  # print(beta.estimate)
                                   
-                                
-                                  #colnames(beta.estimate) = as.character(sort(unique(group_ind)))
-                                  beta.estimate = beta.estimate[,,1]
-                                  colnames(beta.estimate) = as.character(sort(unique(group_ind)))
-                                 
-                                  print("beta.estimate")
-                                  print(beta.estimate)
-                                  
-                                  #beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                   #                                          lambda = 1e-2, 
-                                    #                                         G = matrix(1, k, k), 
-                                     #                                        gamma = 1,
-                                      #                                       tol=1e-3, 
-                                       #                                      mu = 1,
-                                        #                                     num.it = 1000000,
-                                         #                                    c.flag = TRUE,
-                                          #                                   intercept = FALSE,
-                                           #                                  scaling = TRUE) 
-                                  
-                                  #unique(group_ind)
-                              
-                                  
+                                  # Use fuser::fusedLassoProximal
+                                  beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
+                                                                             lambda = pv$lambda, 
+                                                                             G = matrix(1, k, k), 
+                                                                             gamma = pv$gamma,
+                                                                             tol = pv$tol, 
+                                                                             num.it = pv$num.it,
+                                                                             intercept = FALSE,
+                                                                             scaling = pv$scaling) 
                                   # Update self$model with both beta.estimate and glmnet_model
                                   self$model <- list(beta = beta.estimate, 
                                                      glmnet_model = glmnet_model,
@@ -147,13 +138,14 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                                      pv = pv,
                                                      groups = group_ind)
                                   
-                                  # Print the final group index
-                                  #print("colnames(beta.estimate)")
-                                  #print( colnames(beta.estimate) )
-                                  #print("beta.estimate")
-                                  #print(beta.estimate)
-                                  #print("beta.estimate_1")
-                                  #print(beta.estimate[, "1"])
+                                  # Update self$model with both beta.estimate and glmnet_model
+                                  self$model <- list(beta = beta.estimate, 
+                                                     glmnet_model = glmnet_model,
+                                                     model_type = "fuser",
+                                                     formula = task$formula(),
+                                                     data = task$data(),
+                                                     pv = pv,
+                                                     groups = group_ind)
                                   
                                 }, error = function(e) {
                                   # Update self$model with glmnet_model in case of error
@@ -165,10 +157,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                                      groups = group_ind)
                                 })
                                 
-                                # Print the final group index
-                                #print("group_ind")
-                               # print(group_ind)
-                                
+
                                 self$model
                               },
                               .predict = function(task) {
@@ -190,8 +179,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 y.predict <- rep(NA, nrow(X))
                                 
                                 group_names <- colnames(beta)[unique(group_ind)]
-                                print("group_names")
-                                print(group_names)
+                                #print("group_names")
+                                #print(group_names)
                                 
                                 for (name in group_names) {
                                   group_rows <- which(group_ind == name)
@@ -231,7 +220,7 @@ mycv$param_set$values$folds=2
 
 fuser.learner =  LearnerRegrFuser$new()
 fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
-#fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
+fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
 fuser.learner$param_set$values$tol <- paradox::to_tune(1e-7, 1e-2, log=TRUE)
 
 subtrain.valid.cv <- mlr3::ResamplingCV$new()
