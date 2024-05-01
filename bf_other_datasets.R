@@ -113,10 +113,12 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   
                                   # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
                                   beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
-                                                                       transformed.data$Y, group_ind, lambda=0,
-                                                                       gamma=0.001)
+                                                                       transformed.data$Y, group_ind, lambda=0.01,
+                                                                       gamma=0.01)
                                   
                                 
+                                  #colnames(beta.estimate) = as.character(sort(unique(group_ind)))
+                                  beta.estimate = beta.estimate[,,1]
                                   colnames(beta.estimate) = as.character(sort(unique(group_ind)))
                                  
                                   print("beta.estimate")
