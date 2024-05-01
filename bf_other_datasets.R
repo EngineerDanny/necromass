@@ -42,16 +42,16 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                             public = list( 
                               initialize = function() {
                                 ps = ps(
-                                  lambda = p_dbl(0, default = 0.01, tags = "train"),
-                                  gamma = p_dbl(0, default = 0.01, tags = "train"),
+                                  lambda = p_dbl(0, default = 0.001, tags = "train"),
+                                  gamma = p_dbl(0, default = 0, tags = "train"),
                                   tol = p_dbl(lower = 0, upper = 1, default =  9e-5, tags = "train"),
-                                  num.it = p_int(default = 200, tags = "train"),
+                                  num.it = p_int(default = 10000, tags = "train"),
                                   intercept = p_lgl(default = FALSE, tags = "train"),
-                                  scaling = p_lgl(default = FALSE, tags = "train")
+                                  scaling = p_lgl(default = T, tags = "train")
                                 )
-                                ps$values = list(lambda = 0.01, gamma = 0.01, 
-                                                 tol = 9e-5, num.it = 100,
-                                                 intercept = FALSE, scaling = FALSE)
+                                ps$values = list(lambda = 0.001, gamma = 0, 
+                                                 tol = 9e-5, num.it = 10000,
+                                                 intercept = FALSE, scaling = T)
                                 super$initialize(
                                   id = "regr.fuser",
                                   param_set = ps,
@@ -101,21 +101,41 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 # Create the matrices with appropriate dimensions
                                 
                                 y <- matrix(y_train[balanced_group_ind], nrow = n.group, ncol = k, byrow = TRUE)
-                                X <- X_train[balanced_group_ind, , drop = FALSE]
+                                X <- X_train[balanced_group_ind, ]
                                 
                                 # Initialize glmnet_model before tryCatch
                                 glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
                                 
                                 tryCatch({
                                   # Use fuser::fusedLassoProximal
-                                  beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                                                             lambda = pv$lambda, 
-                                                                             G = matrix(1, k, k), 
-                                                                             gamma = pv$gamma,
-                                                                             tol = pv$tol, 
-                                                                             num.it = pv$num.it,
-                                                                             intercept = FALSE,
-                                                                             scaling = pv$scaling) 
+                                  # Generate block diagonal matrices for L2 fusion approach
+                                  transformed.data = generateBlockDiagonalMatrices(X, y, group_ind, matrix(1, k, k))
+                                  
+                                  # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
+                                  beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
+                                                                       transformed.data$Y, group_ind, lambda=0,
+                                                                       gamma=0.001)
+                                  
+                                
+                                  colnames(beta.estimate) = as.character(sort(unique(group_ind)))
+                                 
+                                  print("beta.estimate")
+                                  print(beta.estimate)
+                                  
+                                  #beta.estimate <- fuser::fusedLassoProximal(X, y, group_ind, 
+                                   #                                          lambda = 1e-2, 
+                                    #                                         G = matrix(1, k, k), 
+                                     #                                        gamma = 1,
+                                      #                                       tol=1e-3, 
+                                       #                                      mu = 1,
+                                        #                                     num.it = 1000000,
+                                         #                                    c.flag = TRUE,
+                                          #                                   intercept = FALSE,
+                                           #                                  scaling = TRUE) 
+                                  
+                                  #unique(group_ind)
+                              
+                                  
                                   # Update self$model with both beta.estimate and glmnet_model
                                   self$model <- list(beta = beta.estimate, 
                                                      glmnet_model = glmnet_model,
@@ -132,7 +152,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   #print(beta.estimate)
                                   #print("beta.estimate_1")
                                   #print(beta.estimate[, "1"])
-                                  
                                   
                                 }, error = function(e) {
                                   # Update self$model with glmnet_model in case of error
@@ -169,6 +188,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 y.predict <- rep(NA, nrow(X))
                                 
                                 group_names <- colnames(beta)[unique(group_ind)]
+                                print("group_names")
+                                print(group_names)
                                 
                                 for (name in group_names) {
                                   group_rows <- which(group_ind == name)
@@ -208,7 +229,7 @@ mycv$param_set$values$folds=2
 
 fuser.learner =  LearnerRegrFuser$new()
 fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
-fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
+#fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
 fuser.learner$param_set$values$tol <- paradox::to_tune(1e-7, 1e-2, log=TRUE)
 
 subtrain.valid.cv <- mlr3::ResamplingCV$new()
@@ -227,7 +248,7 @@ subtrain.valid.cv$param_set$values$folds <- 2
 
 # Set up random search tuner
 random.search <- mlr3tuning::TunerRandomSearch$new()
-termination_criterion <- mlr3tuning::trm("evals", n_evals = 100)
+termination_criterion <- mlr3tuning::trm("evals", n_evals = 50)
 fuser.learner.tuned = mlr3tuning::auto_tuner(
   tuner = random.search,
   learner = fuser.learner,
@@ -236,15 +257,11 @@ fuser.learner.tuned = mlr3tuning::auto_tuner(
   terminator = termination_criterion
 )
 reg.learner.list <- list(
-  mlr3learners::LearnerRegrCVGlmnet$new(),
+  mlr3learners::LearnerRegrGlmnet$new(),
   mlr3::LearnerRegrFeatureless$new(), 
-  fuser.learner.tuned
+  #fuser.learner.tuned
+  LearnerRegrFuser$new()
 )
-
-
-#(reg.learner.list <- list(
-#  LearnerRegrFuser$new()
-#))
 
 (debug.grid <- mlr3::benchmark_grid(
   task.list["Taxa4381553"],
@@ -258,8 +275,7 @@ debug.score.dt <- mlr3resampling::score(debug.result)
   task.list,
   reg.learner.list,
   mycv))
-
-reg.dir <- "movingpictures-2024-04-30-benchmark-reg"
+reg.dir <- "movingpictures-2024-04-30-640-benchmark-reg"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -280,7 +296,7 @@ batchtools::submitJobs(chunks, resources=list(
 
 batchtools::getStatus(reg=reg)
 
-jobs.after <- batchtools::getJobTable(reg=reg)
+ jobs.after <- batchtools::getJobTable(reg=reg)
 table(jobs.after$error)
 jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][25:26]
 
@@ -294,4 +310,4 @@ ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
 score.dt <- mlr3resampling::score(bmr)
 
-save(bmr, file="movingpictures-2024-04-27-226-benchmark.RData")
+save(bmr, file="movingpictures-2024-04-30-640-benchmark.RData")

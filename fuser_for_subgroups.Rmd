@@ -77,7 +77,7 @@ transformed.data = generateBlockDiagonalMatrices(X, y, groups, G)
 
 # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
 beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
-                                     transformed.data$Y, groups, lambda=c(0,0.001,0.1,1),
+                                     transformed.data$Y, groups, lambda=c(0.001),
                                      gamma=0.001)
 
 # Returns a beta matrix for each lambda value, so we extract the one we think is optimal.
