@@ -324,10 +324,6 @@ for(task in task.list){
   LearnerRegrFuser$new()
 ))
 
-#(reg.learner.list <- list(
-#  LearnerRegrFuser$new()
-#))
-
 (reg.bench.grid <- mlr3::benchmark_grid(
   task.list,
   reg.learner.list,
@@ -340,7 +336,7 @@ for(task in task.list){
 future::plan("sequential")
 debug.result <- mlr3::benchmark(debug.grid)
 
-reg.dir <- "data-2024-04-17-benchmark-reg"
+reg.dir <- "data-2024-04-24-benchmark-reg"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -373,7 +369,7 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
-save(bmr, file="data-2024-04-17-benchmark.RData")
+save(bmr, file="data-2024-04-24-3-benchmark.RData")
 
 # search for predictions with NAs
 tab = as.data.table(bmr)
