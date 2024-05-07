@@ -33,7 +33,7 @@ gg <- ggplot()+
   facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()
 
-ggsave("tuned_moving_pictures_results_6.png", plot = gg, 
+ggsave("hmpv13_results.png", plot = gg, 
        width = 50, height = 5, dpi = 200, limitsize = FALSE)
 
 #ggsave("necromass_5.png", plot = gg, 
@@ -42,50 +42,39 @@ ggsave("tuned_moving_pictures_results_6.png", plot = gg,
 
 
 ```{r}
-load("data-danny-same-other-cv-01-19.RData")
-library(data.table) 
-library(ggplot2)
-
-
+score.dt <- mlr3resampling::score(bmr)
+library(data.table)
 score.wide <- dcast(
   score.dt,
   train.subsets + test.fold + test.subset + task_id ~ algorithm,
   value.var="regr.mse")
-
-score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
+score.wide[is.na(glmnet), glmnet := featureless]
+score.wide[is.na(tuned), tuned := featureless]
 score.tall <- melt(
   score.wide,
-  measure=c("cv_glmnet","featureless"),
+  measure=c("tuned", "glmnet", "featureless"),
   variable.name="algorithm",
   value.name="regr.mse")
 
-# Filter score.tall by task_id
-score.tall_filtered <- score.tall[task_id %in% c("Absidia", "Amphinema", "Bradyrhizobium", 
-                                                 "Burkholderia", "Cellvibrio", "Cenococcum", "Chaetomium"), ]
-
-score.tall_filtered <- score.tall_filtered[train.subsets %in% c("all"), ]
-
-# Group by train.subsets, test.fold, task_id, algorithm and find mean of regr.mse
-score.tall_filtered_mean <- score.tall_filtered[, .(regr.mse = mean(regr.mse)), by = .(train.subsets, test.fold, task_id, algorithm)]
-score.tall_filtered_mean_new <- setcolorder(score.tall_filtered_mean[, test.subset := "All Samples"], c("train.subsets", "test.fold", "test.subset", "task_id", "algorithm", "regr.mse"))
-
-# Row combine score.tall_filtered and score.tall_filtered_mean
-score.tall_filtered_new <- rbindlist(list(score.tall_filtered, score.tall_filtered_mean))
-
-score.tall_filtered_new$test.subset <- factor(score.tall_filtered_new$test.subset,
-                                             levels = c("Habitat=soil", "Melanization=high", "Melanization=low", "All Samples"))
-
+library(ggplot2)
 gg <- ggplot()+
+  geom_text(aes(
+    regr.mse, train.subsets, label=train.subsets),
+    vjust=-0.5,
+    hjust=1,
+    data=data.table(regr.mse=Inf, train.subsets=c("same","other","all")))+
   geom_point(aes(
     regr.mse, train.subsets, color=algorithm),
     shape=1,
-    data=score.tall_filtered_new)+
+    data=score.tall)+
   facet_grid(test.subset ~ task_id, scales="free")+
   scale_x_log10()
-#png("data-danny-same-other-cv-figure-01-19.png", height=5, width=60, units="in", res=100)
-png("data-danny-same-other-cv-figure-02-06_01.png", height=5, width=13, units="in", res=200)
-print(gg)
-dev.off()
+
+ggsave("hmpv35_results.png", plot = gg, 
+       width = 50, height = 5, dpi = 200, limitsize = FALSE)
+
+#ggsave("necromass_5.png", plot = gg, 
+ #      width = 50, height = 5, dpi = 200, limitsize = FALSE)
 ```
 # Regression
 ```{r}
