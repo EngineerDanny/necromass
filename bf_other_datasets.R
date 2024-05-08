@@ -127,11 +127,10 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   
                                   # Use fuser::fusedLassoProximal
                                   fuser_params <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                                                             lambda = pv$lambda, 
+                                                                             lambda = 0.001, 
                                                                              G = matrix(1, k, k), 
-                                                                             gamma = pv$gamma,
-                                                                             tol = pv$tol, 
-                                                                             num.it = pv$num.it,
+                                                                             gamma = 0.1,
+                                                                             num.it = 200000,
                                                                              intercept = T,
                                                                              scaling = pv$scaling)
                                   beta.estimate <- head(fuser_params, -1)
@@ -288,12 +287,15 @@ LearnerRegrFuserGlmnet <- R6Class("LearnerRegrFuserGlmnet",
                                 # Initialize glmnet_model before tryCatch
                                 #glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
                                 
-                                glmnet_model <- glmnet::glmnet(as.matrix(X), 
-                                              as.vector(y), 
-                                              lambda=0.001, 
-                                              intercept = F,
-                                              standardize = F
-                                )
+                                glmnet_model <- mlr3learners::LearnerRegrGlmnet$new()$train(task)$model
+                                
+                                
+                                #glmnet_model <- glmnet::glmnet(as.matrix(X), 
+                                #              as.vector(y), 
+                                #              lambda=0.001, 
+                                #              intercept = F,
+                                #              standardize = F
+                                #)
                                 
                                 
                                 # Update self$model with glmnet_model in case of error
@@ -383,7 +385,8 @@ fuser.learner.tuned = mlr3tuning::auto_tuner(
 )
 reg.learner.list <- list(
   #mlr3learners::LearnerRegrGlmnet$new(),
-  #mlr3::LearnerRegrFeatureless$new(), 
+  mlr3learners::LearnerRegrGlmnet$new(),
+  mlr3::LearnerRegrFeatureless$new(), 
   #fuser.learner.tuned
   LearnerRegrFuserGlmnet$new(),
   LearnerRegrFuser$new()
