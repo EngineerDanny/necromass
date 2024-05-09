@@ -274,7 +274,7 @@ debug.score.dt <- mlr3resampling::score(debug.result)
   task.list,
   reg.learner.list,
   mycv))
-reg.dir <- "HMPv35-2024-05-01-952-benchmark-reg"
+reg.dir <- "HMPv35-2024-05-09-350-benchmark-reg"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -309,4 +309,4 @@ ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
 score.dt <- mlr3resampling::score(bmr)
 
-save(bmr, file="HMPv35-2024-05-01-952-benchmark.RData")
+save(bmr, file="HMPv35-2024-05-09-350-benchmark.RData")

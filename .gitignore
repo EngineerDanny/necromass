@@ -5,9 +5,7 @@
 *.RData
 .Rproj.user
 *.Rproj
-danny-data-reg/
 *.pdf
 *.png
 *.Rhistory
-data*/
-movingpictures*/
+*/
