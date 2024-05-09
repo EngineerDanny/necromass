@@ -8,7 +8,8 @@ library(paradox)
 library(checkmate)
 library(glmnet)
 
-task.dt <- data.table::fread("HMPv35_otu_table_sub_log.csv")
+#task.dt <- data.table::fread("HMPv35_otu_table_sub_log.csv")
+task.dt <- data.table::fread("HMPv35_sub_log.csv")
 taxa_columns <- setdiff(names(task.dt), "Group_ID")
 new_column_names <- paste0("Taxa", taxa_columns)
 setnames(task.dt, old = taxa_columns, new = new_column_names)
@@ -71,8 +72,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 group_ind <- as.matrix(task$data(cols = subset_ID))
                                 #print("Task summary:")
                                 #str(reg.task$col_roles)
-                                print("group_ind")
-                                print(group_ind)
+                                #print("group_ind")
+                                #print(group_ind)
                                 #print(typeof(group_ind))
                                 
                                 #group_ind <- task$groups$group
@@ -91,22 +92,22 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 }
                                 
                                 # Now 'balanced_group_ind' contains an equal number of indices for each group
-                                group_ind <- group_ind[balanced_group_ind]
+                                #group_ind <- group_ind[balanced_group_ind]
                                 
                                 # Print the final group index
-                                print("updated group_ind")
-                                print(group_ind)
+                                #print("updated group_ind")
+                                #print(group_ind)
                                 
                                 # Print the final group index
-                                print("balanced_group_ind")
-                                print(balanced_group_ind)
+                                #print("balanced_group_ind")
+                                #print(balanced_group_ind)
                                 
                                 pv <- self$param_set$get_values(tags = "train")
                                 
                                 # Create the matrices with appropriate dimensions
                                 
-                                y <- matrix(y_train[balanced_group_ind], nrow = n.group, ncol = k, byrow = TRUE)
-                                X <- X_train[balanced_group_ind, ]
+                                #y <- matrix(y_train[balanced_group_ind], nrow = n.group, ncol = k, byrow = TRUE)
+                                #X <- X_train[balanced_group_ind, ]
                                 
                                 # Initialize glmnet_model before tryCatch
                                 glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
@@ -126,11 +127,11 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   # print(beta.estimate)
                                   
                                   # Use fuser::fusedLassoProximal
-                                  fuser_params <- fuser::fusedLassoProximal(X, y, group_ind, 
-                                                                             lambda = 0.001, 
+                                  fuser_params <- fuser::fusedLassoProximal(X_train, y_train, group_ind, 
+                                                                             lambda = 0.01, 
                                                                              G = matrix(1, k, k), 
                                                                              gamma = 0.1,
-                                                                             num.it = 200000,
+                                                                             num.it = 20000,
                                                                              intercept = T,
                                                                              scaling = pv$scaling)
                                   beta.estimate <- head(fuser_params, -1)
@@ -149,6 +150,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 }, error = function(e) {
                                   print("error")
                                   print(e)
+                                  #print("updated group_ind")
+                                 # print(group_ind)
                                   # Update self$model with glmnet_model in case of error
                                   self$model <- list(glmnet_model = glmnet_model,
                                                      model_type = "glmnet",
@@ -214,142 +217,8 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 )
 
 
-LearnerRegrFuserGlmnet <- R6Class("LearnerRegrFuserGlmnet",
-                            inherit = LearnerRegr,
-                            public = list( 
-                              initialize = function() {
-                                ps = ps(
-                                  lambda = p_dbl(0, default = 0.01, tags = "train"),
-                                  gamma = p_dbl(0, default = 0.01, tags = "train"),
-                                  tol = p_dbl(lower = 0, upper = 1, default = 3e-3, tags = "train"),
-                                  num.it = p_int(default = 1000, tags = "train"),
-                                  intercept = p_lgl(default = FALSE, tags = "train"),
-                                  scaling = p_lgl(default = T, tags = "train")
-                                )
-                                ps$values = list(lambda = 0.01, gamma = 0.01, 
-                                                 tol = 3e-3, num.it = 1000,
-                                                 intercept = FALSE, scaling = T)
-                                super$initialize(
-                                  id = "regr.fuserglmnet",
-                                  param_set = ps,
-                                  feature_types = c("logical", "integer", "numeric"),
-                                  label = "FuserGlmnet",
-                                  packages = c("mlr3learners", "fuser")
-                                )
-                              }
-                            ),
-                            private = list(
-                              .train = function(task) {
-                                # Assuming 'task' is a task object with data, feature names, and group information
-                                subset_ID <- task$col_roles$subset
-                                X_train <- as.matrix(task$data(cols = setdiff(task$feature_names, subset_ID)))
-                                y_train <- as.matrix(task$data(cols = task$target_names))
-                                group_ind <- as.matrix(task$data(cols = subset_ID))
-                                #print("Task summary:")
-                                #str(reg.task$col_roles)
-                                print("group_ind")
-                                print(group_ind)
-                                #print(typeof(group_ind))
-                                
-                                #group_ind <- task$groups$group
-                                #group_ind <- task$groups$subset
-                                k <- as.numeric(length(unique(group_ind))) # number of groups
-                                n.group <- min(table(group_ind)) # minimum samples per group across all groups
-                                
-                                
-                                # Initialize a new vector to store the balanced group indices
-                                balanced_group_ind <- integer(0)
-                                
-                                # Loop through each unique group and select 'n.group' indices for each
-                                for (grp in unique(group_ind)) {
-                                  grp_indices <- which(group_ind == grp)
-                                  balanced_group_ind <- c(balanced_group_ind, sample(grp_indices, n.group))
-                                }
-                                
-                                # Now 'balanced_group_ind' contains an equal number of indices for each group
-                                group_ind <- group_ind[balanced_group_ind]
-                                
-                                # Print the final group index
-                                print("updated group_ind")
-                                print(group_ind)
-                                
-                                # Print the final group index
-                                print("balanced_group_ind")
-                                print(balanced_group_ind)
-                                
-                                pv <- self$param_set$get_values(tags = "train")
-                                
-                                # Create the matrices with appropriate dimensions
-                                
-                                y <- matrix(y_train[balanced_group_ind], nrow = n.group, ncol = k, byrow = TRUE)
-                                X <- X_train[balanced_group_ind, ]
-                                
-                                # Initialize glmnet_model before tryCatch
-                                #glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
-                                
-                                glmnet_model <- mlr3learners::LearnerRegrGlmnet$new()$train(task)$model
-                                
-                                
-                                #glmnet_model <- glmnet::glmnet(as.matrix(X), 
-                                #              as.vector(y), 
-                                #              lambda=0.001, 
-                                #              intercept = F,
-                                #              standardize = F
-                                #)
-                                
-                                
-                                # Update self$model with glmnet_model in case of error
-                                self$model <- list(glmnet_model = glmnet_model,
-                                                   model_type = "glmnet",
-                                                   formula = task$formula(),
-                                                   data = task$data(),
-                                                   pv = pv,
-                                                   groups = group_ind)
-                                
-                                
-                                self$model
-                              },
-                              .predict = function(task) {
-                                ordered_features = function(task, learner) {
-                                  cols = names(learner$state$data_prototype)
-                                  task$data(cols = intersect(cols, task$feature_names))
-                                }
-                                
-                          
-                                subset_ID <- task$col_roles$subset
-                                X_test <- as.matrix(task$data(cols = setdiff(task$feature_names, subset_ID)))
-                                group_ind <- as.matrix(task$data(cols = subset_ID))
-                                new_X_test = as.matrix(task$data(cols = task$feature_names))
-                                X = apply(X_test, 2, as.numeric)
-                                #group_ind <- task$groups$group
-                                
-                                beta = self$model$beta
-                                intercept = self$model$intercept
-                                model_type <- self$model$model_type
-                                train_group_ind <- self$model$groups
-                                y.predict <- rep(NA, nrow(X))
-                                
-                                group_names <- colnames(beta)[unique(group_ind)]
-                                #print("group_names")
-                                #print(group_names)
-                                
-                                # Check for NAs or errors and use glmnet_model if needed
-                                
-                                y.predict.new <- as.vector( predict(self$model$glmnet_model, newx= as.matrix(X_test), type="response"))
-                                y.predict.new
-                                
-                                #y.predict.new <- as.vector(predict(self$model$glmnet_model, newx = new_X_test))
-                                
-                                
-                                #y.predict <- as.vector(predict(self$model$glmnet_model, newx = X_test))
-                                # Return the predictions as a numeric vector
-                                list(response = y.predict.new)
-                              }
-                            )
-)
-
 mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
-mycv$param_set$values$folds=2
+mycv$param_set$values$folds=5
 #for(task in task.list){
 #  mycv$instantiate(task)
 #}
@@ -384,17 +253,14 @@ fuser.learner.tuned = mlr3tuning::auto_tuner(
   terminator = termination_criterion
 )
 reg.learner.list <- list(
+  mlr3learners::LearnerRegrCVGlmnet$new(),
   #mlr3learners::LearnerRegrGlmnet$new(),
-  mlr3learners::LearnerRegrGlmnet$new(),
   mlr3::LearnerRegrFeatureless$new(), 
   #fuser.learner.tuned
-  LearnerRegrFuserGlmnet$new(),
+  #LearnerRegrFuserGlmnet$new(),
   LearnerRegrFuser$new()
 )
-# 1 - 37 = 37
-# 38 - 74 = 74-37 = 37
-# 75 - 116 = 116 - 74 = 42
-# 117 - 159 = 159 - 116 = 43
+
 
 (debug.grid <- mlr3::benchmark_grid(
   task.list["Taxa356733"],
