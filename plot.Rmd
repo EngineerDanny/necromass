@@ -5,6 +5,46 @@ file.edit(file.path(Sys.getenv("HOME"), ".Renviron"))
 
 
 ```{r}
+dataname <- "HMPv35"
+
+score.dt <- mlr3resampling::score(bmr)
+library(data.table)
+score.wide <- dcast(
+  score.dt,
+  train.subsets + test.fold + test.subset + task_id ~ algorithm,
+  value.var="regr.mse")
+score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
+score.wide[is.na(fuser), fuser := featureless]
+score.tall <- melt(
+  score.wide,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+# Set the order of the algorithms
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c( "fuser", "cv_glmnet", "featureless"))
+
+library(ggplot2)
+gg <- ggplot()+
+  geom_text(aes(
+    regr.mse, train.subsets, label=train.subsets),
+    vjust=-0.5,
+    hjust=1,
+    data=data.table(regr.mse=Inf, train.subsets=c("same","other","all")))+
+  geom_point(aes(
+    regr.mse, train.subsets, color=algorithm),
+    shape=1,
+    data=score.tall)+
+  facet_grid(test.subset ~ task_id, scales="free")+
+  labs(title = dataname) +
+  scale_x_log10()
+
+print(gg)
+ggsave( paste0(dataname,   "_results.png"), plot = gg, 
+       width = 30, height = 7, dpi = 200, limitsize = FALSE)
+```
+
+
+```{r}
 library(ggplot2)
 library(data.table)
 
@@ -22,11 +62,11 @@ score.tall <- melt(
   value.name="regr.mse")
 score.tall[, mean_regr.mse := mean(regr.mse), by = .(train.subsets, test.fold, test.subset, algorithm)]
 # Set the order of the algorithms
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser" ))
 head(score.tall)
 score.tall
 
-fwrite(score.tall, "score.tall.csv")
+fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
 
 gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, 
                               y = algorithm, 
@@ -35,12 +75,12 @@ gg1 <- ggplot(score.tall, aes(x = mean_regr.mse,
   facet_grid(train.subsets ~ test.subset, 
              labeller = labeller(test.subset = function(x) paste("Subset", x))) +
   scale_color_discrete(name = "Test Fold") +
-  labs(x = "Mean Regression MSE", y = "Algorithm", title = "HMPv35") +
+  labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname) +
   scale_x_log10()
-print(gg1)
+#print(gg1)
 
-ggsave("hmpv35_results.png", plot = gg1, 
-       width = 10, height = 5, dpi = 200, limitsize = FALSE)
+ggsave( paste0(dataname,   "_results_2.png"), plot = gg1, 
+       width = 20, height = 5, dpi = 200, limitsize = FALSE)
 
 ```
 
@@ -59,44 +99,94 @@ grouped_means <- all_same_values[, .(mean_all = mean(all, na.rm = TRUE),
                                     mean_same = mean(same, na.rm = TRUE)),
                                 by = .(test.fold, algorithm)]
 
-grouped_means[, diff_all_same := mean_all - mean_same]
+grouped_means[, diff_all_same := mean_all - mean_same, by = .(algorithm)]
+grouped_means[, p_value := t.test(mean_same, mean_all)$p.value, by = .(algorithm)]
+grouped_means[, mean_diff_all_same := mean(diff_all_same),  by = .(algorithm)]
 
-grouped_means[, p_value := t.test(mean_same, mean_all)$p.value]
-grouped_means[, mean_diff_all_same := mean(diff_all_same)]
+# Keep only the required columns and add dataset name
+final_results <- grouped_means[, .(algorithm, p_value, mean_diff_all_same)]
+final_results[, dataset_name := "HMPv35"]
 
-grouped_means
+# Print the result
+print(final_results)
+
+
+gg2 <- ggplot(final_results, aes(x = p_value, y = mean_diff_all_same, color = algorithm)) +
+  geom_label(aes(label = dataset_name)) +  
+  geom_hline(yintercept = 0, size = 0.1) + 
+  geom_vline(xintercept = 0, size = 0.1) + 
+  labs(title = "Mean Difference vs P-value", 
+       x = "P-value", y = "Mean Difference (all - same)", 
+       color = "Algorithm") +
+   theme_minimal()
+
+# Print the plot
+print(gg2)
 ```
 
 ```{r}
 
+# Load necessary libraries
+library(data.table)
+
+# List of dataset names and corresponding CSV file names
+datasets <- list("twinsuk" = "twinsuk.score.tall.csv",
+                 "qa10394" = "qa10394.score.tall.csv")
+
+# Initialize an empty data.table to store the final results
+final_results <- data.table()
+
+# Loop through each dataset
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  
+  # Read the data from the CSV file
+  score.tall <- fread(csv_file)
+  
+  # Create the 'same' column by filtering and assigning regr.mse values where train.subsets is 'same'
+  same_values <- score.tall[train.subsets == "same", .(test.fold, test.subset, algorithm, task_id, same = regr.mse)]
+  all_values <- score.tall[train.subsets == "all", .(test.fold, test.subset, algorithm, task_id, all = regr.mse)]
+  
+  # Merge the two data.tables
+  all_same_values <- merge(all_values, same_values, 
+                           by = c("test.fold", "test.subset", "algorithm", "task_id"),
+                           all.x = TRUE)  # Perform a left join
+  
+  # Group by test.fold and algorithm, calculate mean for all and same columns
+  grouped_means <- all_same_values[, .(mean_all = mean(all, na.rm = TRUE),
+                                       mean_same = mean(same, na.rm = TRUE)),
+                                   by = .(test.fold, algorithm)]
+  
+  grouped_means[, diff_all_same := mean_all - mean_same, by = .(algorithm)]
+  grouped_means[, p_value := t.test(mean_same, mean_all)$p.value, by = .(algorithm)]
+  grouped_means[, mean_diff_all_same := mean(diff_all_same), by = .(algorithm)]
+  
+  # Keep only the required columns and add dataset name
+  dataset_results <- grouped_means[, .(algorithm, p_value, mean_diff_all_same)]
+  dataset_results[, dataset_name := dataset_name]
+  
+  # Concatenate the results into final_results
+  final_results <- rbind(final_results, dataset_results, fill = TRUE)
+}
 
 
-# Merge the same_values back to the original data.table with allow.cartesian=TRUE
-score.tall <- merge(score.tall, same_values, by = c("test.fold", "algorithm", "task_id"), all.x = TRUE, allow.cartesian = TRUE)
 
-# Fill NA values in 'same' column where train.subsets is 'all' with the corresponding same value
-score.tall[is.na(same) & train.subsets == "all", same := regr.mse]
+gg2 <- ggplot(final_results, aes(x = p_value, y = mean_diff_all_same, color = algorithm)) +
+  geom_label(aes(label = dataset_name)) +  
+  geom_hline(yintercept = 0, size = 0.1) + 
+  geom_vline(xintercept = 0, size = 0.1) + 
+  labs(title = "Mean Difference vs P-value", 
+       x = "P-value", y = "Mean Difference (all - same)", 
+       color = "Algorithm") +
+   theme_minimal()
 
-# Create the 'all' column - which is simply the 'regr.mse' column
-score.tall[, all := regr.mse]
+# Print the plot
+print(gg2)
 
-# Create the 'all minus same' column
-score.tall[, all_minus_same := all - same]
-
-# Now we have the required columns: test.fold, algorithm, same, all, all_minus_same
-print(head(score.tall))
-
-# Perform paired t-test
-# We perform the t-test only on the 'all' and 'same' pairs where both values are present
-paired_data <- score.tall[!is.na(same) & train.subsets == "all", .(all, same)]
-t_test_result <- t.test(paired_data$same, paired_data$all, paired = TRUE)
-print(t_test_result)
-
-
-score.tall
+# Print the final result
+print(final_results)
 
 ```
-
 
 
 ```{r}
@@ -129,41 +219,6 @@ gg <- ggplot(score.tall2, aes(x = algorithm, y = mean_regr.mse, group = test.fol
 print(gg)
 ```
 
-```{r}
-score.dt <- mlr3resampling::score(bmr)
-library(data.table)
-score.wide <- dcast(
-  score.dt,
-  train.subsets + test.fold + test.subset + task_id ~ algorithm,
-  value.var="regr.mse")
-score.wide[is.na(glmnet), glmnet := featureless]
-score.wide[is.na(tuned), tuned := featureless]
-score.tall <- melt(
-  score.wide,
-  measure=c("tuned", "glmnet", "featureless"),
-  variable.name="algorithm",
-  value.name="regr.mse")
-
-library(ggplot2)
-gg <- ggplot()+
-  geom_text(aes(
-    regr.mse, train.subsets, label=train.subsets),
-    vjust=-0.5,
-    hjust=1,
-    data=data.table(regr.mse=Inf, train.subsets=c("same","other","all")))+
-  geom_point(aes(
-    regr.mse, train.subsets, color=algorithm),
-    shape=1,
-    data=score.tall)+
-  facet_grid(test.subset ~ task_id, scales="free")+
-  scale_x_log10()
-
-ggsave("hmpv35_results.png", plot = gg, 
-       width = 50, height = 5, dpi = 200, limitsize = FALSE)
-
-#ggsave("necromass_5.png", plot = gg, 
- #      width = 50, height = 5, dpi = 200, limitsize = FALSE)
-```
 
 
 # Regression
