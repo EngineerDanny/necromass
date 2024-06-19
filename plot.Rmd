@@ -131,7 +131,10 @@ library(data.table)
 
 # List of dataset names and corresponding CSV file names
 datasets <- list("twinsuk" = "twinsuk.score.tall.csv",
-                 "qa10394" = "qa10394.score.tall.csv")
+                 "qa10394" = "qa10394.score.tall.csv",
+                 "HMPv13" = "HMPv13.score.tall.csv",
+                 "HMPv35" = "HMPv35.score.tall.csv"
+                 )
 
 # Initialize an empty data.table to store the final results
 final_results <- data.table()
@@ -170,21 +173,20 @@ for (dataset_name in names(datasets)) {
 }
 
 
-
+final_results$algorithm <- factor(final_results$algorithm, levels = c( "fuser", "cv_glmnet", "featureless" ))
 gg2 <- ggplot(final_results, aes(x = p_value, y = mean_diff_all_same, color = algorithm)) +
-  geom_label(aes(label = dataset_name)) +  
+  geom_label(aes(label = dataset_name), show.legend = T) +  
   geom_hline(yintercept = 0, size = 0.1) + 
   geom_vline(xintercept = 0, size = 0.1) + 
   labs(title = "Mean Difference vs P-value", 
        x = "P-value", y = "Mean Difference (all - same)", 
-       color = "Algorithm") +
-   theme_minimal()
+       color = "Algorithm") 
 
 # Print the plot
 print(gg2)
 
-# Print the final result
-print(final_results)
+ggsave("mean_diff_vs_p_value.png", plot = gg2, 
+       width = 20, height = 5, dpi = 200, limitsize = FALSE)
 
 ```
 
