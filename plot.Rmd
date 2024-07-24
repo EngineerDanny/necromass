@@ -48,42 +48,111 @@ ggsave( paste0(dataname,   "_results.png"), plot = gg,
 library(ggplot2)
 library(data.table)
 
+# Load and process data
 score.dt <- mlr3resampling::score(bmr)
+
+# Reshape data
 score.wide <- dcast(
   score.dt,
   train.subsets + test.fold + test.subset + task_id ~ algorithm,
-  value.var="regr.mse")
+  value.var = "regr.mse"
+)
+
+# Handle missing values
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
 score.wide[is.na(fuser), fuser := featureless]
+
+# Filter out "other" condition
+score.wide <- score.wide[train.subsets != "other"]
+
+# Melt data to long format
 score.tall <- melt(
   score.wide,
-  measure=c("fuser", "cv_glmnet", "featureless"),
-  variable.name="algorithm",
-  value.name="regr.mse")
-score.tall[, mean_regr.mse := mean(regr.mse), by = .(train.subsets, test.fold, test.subset, algorithm)]
-# Set the order of the algorithms
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser" ))
+  measure = c("fuser", "cv_glmnet", "featureless"),
+  variable.name = "algorithm",
+  value.name = "regr.mse"
+)
 
-# Filter out the "other" condition
-score.tall <- score.tall[train.subsets != "other"]
+# Calculate mean and standard deviation
+score.tall[, `:=`(
+  mean_regr.mse = mean(regr.mse),
+  xmin = mean(regr.mse) - var(regr.mse),
+  xmax = mean(regr.mse) + var(regr.mse)
+), by = .(train.subsets, test.subset, algorithm)]
 
-head(score.tall)
+# Set algorithm order
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
 
+
+
+# Write processed data to CSV
 fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
 
-gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, 
-                              y = algorithm, 
-                              color = factor(test.fold))) +
-  geom_point(shape=1) +
+# Create plot
+gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
+  geom_errorbarh(aes(xmin = xmin, 
+                     xmax = xmax),
+                 height = 0.22, alpha = 0.7) +
+  geom_point(shape = 1) +
   facet_grid(train.subsets ~ test.subset, 
              labeller = labeller(test.subset = function(x) paste("Subset", x))) +
   scale_color_discrete(name = "Test Fold") +
-  labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname) +
-  scale_x_log10()
-print(gg1)
+  labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname)
 
-ggsave( paste0(dataname,   "_results_2.png"), plot = gg1, 
+# Print and save plot
+print(gg1)
+ggsave(paste0(dataname, "_results_2.png"), plot = gg1, 
        width = 20, height = 5, dpi = 200, limitsize = FALSE)
+
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Read the CSV file
+data <- read.csv("HMPv35.score.tall.csv")
+
+# Prepare the data
+plot_data <- data %>%
+  group_by(train.subsets, test.subset, algorithm) %>%
+  summarise(
+    mean_regr.mse = mean(mean_regr.mse),
+    se_regr.mse = sd(mean_regr.mse) / sqrt(n())
+  ) %>%
+  ungroup()
+
+# Create the plot
+gg <- ggplot(plot_data, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
+  geom_errorbarh(aes(xmin = mean_regr.mse - 2*se_regr.mse, 
+                     xmax = mean_regr.mse + 2*se_regr.mse),
+                 height = 0.2, alpha = 0.7) +
+  geom_point(size = 3) +
+  facet_grid(train.subsets ~ test.subset, 
+             labeller = labeller(test.subset = function(x) paste("Test Subset", x))) +
+  scale_x_log10(labels = scales::scientific) +
+  scale_color_brewer(palette = "Set1") +
+  labs(x = "Mean Regression MSE (log scale)",
+       y = "Algorithm",
+       title = "Performance Comparison of Algorithms Across Different Subsets",
+       subtitle = "Error bars represent standard error") +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 11, face = "bold"),
+    legend.position = "bottom",
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12)
+  )
+
+print(gg)
+# Save the plot
+ggsave("algorithm_performance_comparison.png", plot = gg, width = 12, height = 8, dpi = 300)
 
 ```
 
