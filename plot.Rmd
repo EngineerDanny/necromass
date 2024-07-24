@@ -63,8 +63,11 @@ score.tall <- melt(
 score.tall[, mean_regr.mse := mean(regr.mse), by = .(train.subsets, test.fold, test.subset, algorithm)]
 # Set the order of the algorithms
 score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser" ))
+
+# Filter out the "other" condition
+score.tall <- score.tall[train.subsets != "other"]
+
 head(score.tall)
-score.tall
 
 fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
 
@@ -77,7 +80,7 @@ gg1 <- ggplot(score.tall, aes(x = mean_regr.mse,
   scale_color_discrete(name = "Test Fold") +
   labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname) +
   scale_x_log10()
-#print(gg1)
+print(gg1)
 
 ggsave( paste0(dataname,   "_results_2.png"), plot = gg1, 
        width = 20, height = 5, dpi = 200, limitsize = FALSE)
