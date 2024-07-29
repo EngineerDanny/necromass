@@ -10,7 +10,7 @@ library(data.table)
 ```
 
 ```{r}
-dataname <- "HMPv35"
+dataname <- "HMPv13"
 
 score.dt <- mlr3resampling::score(bmr)
 score.wide <- dcast(
@@ -25,7 +25,7 @@ score.tall <- melt(
   variable.name="algorithm",
   value.name="regr.mse")
 # Set the order of the algorithms
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c( "fuser", "cv_glmnet", "featureless"))
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
 
 
 gg <- ggplot()+
@@ -43,8 +43,8 @@ gg <- ggplot()+
   scale_x_log10()
 
 print(gg)
-ggsave( paste0(dataname,   "_results.png"), plot = gg, 
-       width = 30, height = 7, dpi = 200, limitsize = FALSE)
+#ggsave( paste0(dataname,   "_results.png"), plot = gg, 
+ #      width = 30, height = 7, dpi = 200, limitsize = FALSE)
 ```
 
 
@@ -87,16 +87,14 @@ score.tall[, `:=`(
 # Set algorithm order
 score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
 
-
-
 # Write processed data to CSV
-fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
+#fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
 
 # Create plot
 gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
   geom_errorbarh(aes(xmin = xmin, 
                      xmax = xmax),
-                 height = 0.22, alpha = 0.7) +
+                 height = 0.1, alpha = 0.7) +
   geom_point(shape = 1) +
   facet_grid(train.subsets ~ test.subset, 
              labeller = labeller(test.subset = function(x) paste("Subset", x))) +
@@ -105,10 +103,78 @@ gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, y = algorithm, color = algorith
 
 # Print and save plot
 print(gg1)
-ggsave(paste0(dataname, "_results_2.png"), plot = gg1, 
-       width = 20, height = 5, dpi = 200, limitsize = FALSE)
+#ggsave(paste0(dataname, "_results_2.png"), plot = gg1, 
+ #      width = 20, height = 5, dpi = 200, limitsize = FALSE)
 
 ```
+
+```{r}
+library(data.table)
+library(ggplot2)
+
+# Assuming score.wide is your data frame
+setDT(score.wide)
+
+# Melt the data to long format
+score.long <- melt(score.wide, 
+                   id.vars = c("train.subsets", "test.fold", "test.subset", "task_id"),
+                   variable.name = "algorithm",
+                   value.name = "regr.mse")
+
+# Create 'all' and 'same' conditions
+score.long[, algorithm := paste0(algorithm, " (", train.subsets, ")")]
+
+# Calculate mean and standard deviation
+score.summary <- score.long[, .(
+  mean_regr.mse = mean(regr.mse),
+  sd_regr.mse = sd(regr.mse)
+), by = .(test.subset, algorithm)]
+
+# Remove any remaining NA entries, the 'NA' algorithm, and 'fuser_same'
+score.summary <- score.summary[algorithm != "fuser (same)"]
+
+# Set algorithm order
+score.summary$algorithm <- factor(score.summary$algorithm, 
+                                  levels = c("featureless (same)", "featureless (all)", 
+                                             "cv_glmnet (same)", "cv_glmnet (all)", 
+                                             "fuser (all)"))
+
+# Create formatted text for labels
+score.summary[, label := sprintf("%.2f±%.2f", mean_regr.mse, sd_regr.mse)]
+
+# Function to determine hjust and vjust
+get_just <- function(alg) {
+  if (grepl("featureless", alg)) {
+    list(hjust = 0.5, vjust = 1.4)
+  } else {
+    list(hjust = -0.9, vjust = 0.5)
+  }
+}
+
+# Apply the function to create hjust and vjust columns
+score.summary[, c("hjust", "vjust") := get_just(algorithm), by = algorithm]
+
+# Create the plot
+gg1 <- ggplot(score.summary, aes(x = mean_regr.mse, y = algorithm)) +
+  geom_errorbarh(aes(xmin = mean_regr.mse - sd_regr.mse, 
+                     xmax = mean_regr.mse + sd_regr.mse),
+                 height = 0.1) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = label, hjust = hjust, vjust = vjust), size = 3) +
+  facet_wrap(~ test.subset, 
+             labeller = labeller(test.subset = function(x) paste("Subset", x)), 
+             ncol = 4,  scales = "free_x") +
+  labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+print(gg1)
+
+ggsave( paste0(dataname,   "_algo_mse_results.png"), plot = gg1, 
+       width = 9, height = 2.2, dpi = 300, limitsize = FALSE)
+
+```
+
 
 
 ```{r}
@@ -226,7 +292,7 @@ gg <- ggplot(final_results, aes(x = log_mean_p_value, y = mean_diff, color = dat
 print(gg)
 
 # Save the plot
-#ggsave("algorithm_comparison_plot.png", gg, width = 10, height = 8, dpi = 300)
+ggsave("mean_diff_vs_p_value.png", gg, width = 10, height = 8, dpi = 300)
 
 ```
 
@@ -310,12 +376,3 @@ print(gg)
 dev.off()
 ```
 
-```{r}
-## TODO compute p-value for difference between cv_glmnet and featureless
-gg2 <- ggplot()+
-  geom_point(aes(
-    cv_glmnet-featureless, train.subsets),
-    data=score.wide)+
-  facet_grid(. ~ test.subset, labeller=label_both)
-print(gg2)
-```
