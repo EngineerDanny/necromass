@@ -10,7 +10,7 @@ library(data.table)
 ```
 
 ```{r}
-dataname <- "HMPv13"
+dataname <- "twinsuk"
 
 score.dt <- mlr3resampling::score(bmr)
 score.wide <- dcast(
@@ -88,7 +88,7 @@ score.tall[, `:=`(
 score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
 
 # Write processed data to CSV
-#fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
+fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
 
 # Create plot
 gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
@@ -184,7 +184,8 @@ library(ggplot2)
 library(ggrepel)
 
 # List of dataset names and corresponding CSV file names
-datasets <- list("twinsuk" = "twinsuk.score.tall.csv",
+datasets <- list("necromass" = "necromass.score.tall.csv",
+                 "twinsuk" = "twinsuk.score.tall.csv",
                  "qa10394" = "qa10394.score.tall.csv",
                  "HMPv13" = "HMPv13.score.tall.csv",
                  "HMPv35" = "HMPv35.score.tall.csv"
@@ -272,8 +273,8 @@ gg <- ggplot(final_results, aes(x = log_mean_p_value, y = mean_diff, color = dat
     limits = c(-5, 0)
   ) +
   scale_y_continuous(
-    "mean test error difference (fuser_all - cv_glmnet_same)",
-    limits = c(-0.1, 0.05)
+    "mean test error difference (fuser_all - cv_glmnet_same)"
+    #limits = c(-0.1, 0.05)
   ) +
  # scale_color_brewer(palette = "Set1") +
   theme_bw()+
@@ -292,7 +293,7 @@ gg <- ggplot(final_results, aes(x = log_mean_p_value, y = mean_diff, color = dat
 print(gg)
 
 # Save the plot
-ggsave("mean_diff_vs_p_value.png", gg, width = 10, height = 8, dpi = 300)
+#ggsave("mean_diff_vs_p_value.png", gg, width = 10, height = 8, dpi = 300)
 
 ```
 
