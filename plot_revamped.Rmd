@@ -1,0 +1,173 @@
+
+```{r}
+library(ggplot2)
+library(data.table)
+```
+
+```{r}
+dataname <- "HMPv13"
+dataname <- "HMPv35"
+#dataname <- "twinsuk"
+#dataname <- "MovingPictures"
+#dataname <- "qa10394"
+#dataname <- "necromass"
+
+score.dt <- mlr3resampling::score(bmr)
+score.wide <- dcast(
+  score.dt,
+  train.subsets + test.fold + test.subset + task_id ~ algorithm,
+  value.var="regr.mse")
+score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
+score.wide[is.na(fuser), fuser := featureless]
+
+# Filter out "other" condition
+score.wide <- score.wide[train.subsets != "other"]
+```
+
+```{r}
+score.tall <- melt(
+  score.wide,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+# Set the order of the algorithms
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
+
+# Add new column for log(regr.mse)
+score.tall[, log_regr.mse := log10(regr.mse)]
+
+
+gg <- ggplot() +
+  geom_text(aes(
+    log_regr.mse, train.subsets, label=train.subsets),
+    vjust=-0.5,
+    hjust=1,
+    data=data.table(log_regr.mse=Inf, train.subsets=c("same", "all"))) +
+  geom_point(aes(
+    log_regr.mse, train.subsets, color=algorithm),
+    shape=1,
+    data=score.tall) +
+  facet_grid(test.subset ~ task_id, scales="free") +
+  labs(title = dataname,
+       x = "log(MSE)") +  # Updated x-axis label
+  scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE))  # Format x-axis labels
+
+print(gg)
+ggsave( paste0(dataname,   "_results_8_11.png"), plot = gg, 
+       width = 30, height = 7, dpi = 200, limitsize = FALSE)
+```
+
+
+```{r}
+# Calculate performance difference between fuser and cv_glmnet
+score.wide[, perf_diff := cv_glmnet - fuser]
+selected_taxa <- score.wide[, .(
+  med_diff = mean(perf_diff)
+), by = .(task_id, test.subset)][order(-med_diff, task_id, test.subset)]
+
+# Get one task_id/test.subset combination from each category using top differences
+taxa_considerably_better <- selected_taxa[1, .(task_id, test.subset)]
+taxa_fairly_better <- selected_taxa[2, .(task_id, test.subset)]
+taxa_worse <- selected_taxa[.N, .(task_id, test.subset)]
+
+# Combine the selected combinations
+selected_pairs <- rbind(taxa_considerably_better, taxa_fairly_better, taxa_worse)
+
+# Filter the wide data for selected task_id AND test.subset combinations
+score.wide_selected <- score.wide[
+  task_id %in% selected_pairs$task_id & 
+  test.subset %in% selected_pairs$test.subset
+]
+
+# Convert to tall format
+score_tall <- melt(
+  score.wide_selected,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+score_tall <- score_tall[!(algorithm == "featureless" & train.subsets == "all")]
+score_tall <- score_tall[!(algorithm == "fuser" & train.subsets == "same")]
+score_tall[, log_regr.mse := log10(regr.mse)]
+# Create algorithm labels with train.subsets
+score_tall[, algorithm_label := paste0(algorithm, " (", train.subsets, ")")]
+
+score_summary <- score_tall[, .(
+  median_log_mse = median(log_regr.mse),
+  q1 = quantile(log_regr.mse, 0.4),
+  q3 = quantile(log_regr.mse, 0.6)
+), by = .(task_id, algorithm_label)]
+
+
+score_summary[algorithm_label == "fuser (all)", algorithm_label := "proposed fuser (all)"]
+score_summary[, `:=`(
+  error_margin = (q3 - q1)/2,
+  label = sprintf("%.2f±%.2f", median_log_mse, (q3 - q1)/2)
+)]
+
+# Set the order of algorithms (from top to bottom)
+algorithm_order <- c(
+  "featureless (same)",
+  "cv_glmnet (same)",
+  "cv_glmnet (all)",
+  "proposed fuser (all)"
+)
+
+# Set factor levels for algorithm_label
+score_summary[, algorithm_label := factor(algorithm_label, 
+                                        levels = algorithm_order)]
+
+# Create taxa labels and set order
+taxa_labels <- c(
+  setNames(sprintf("Fuser Considerably Better\n(Taxa%s)", gsub("Taxa", "", taxa_considerably_better)), taxa_considerably_better),
+  setNames(sprintf("Fuser Fairly Better\n(Taxa%s)", gsub("Taxa", "", taxa_fairly_better)), taxa_fairly_better),
+  setNames(sprintf("Fuser Worse\n(Taxa%s)", gsub("Taxa", "", taxa_worse)), taxa_worse)
+)
+
+# Set taxa order
+score_summary[, task_id := factor(task_id, 
+                                levels = c(taxa_considerably_better$task_id, 
+                                         taxa_fairly_better$task_id, 
+                                         taxa_worse$task_id))] 
+
+# Add color column for the proposed fuser
+score_summary[, is_fuser := algorithm_label == "proposed fuser (all)"]
+
+taxa_considerably_better$task_id
+```
+
+```{r}
+# Create the plot
+gg <- ggplot(score_summary, aes(x = median_log_mse, y = algorithm_label)) +
+  facet_wrap(~task_id, scales = "free_x", ncol = 3,
+             labeller = labeller(task_id = taxa_labels)) +
+  geom_errorbarh(aes(xmin = q1, xmax = q3, color = is_fuser), height = 0.1) +
+  geom_point(aes(color = is_fuser), shape = 1) +
+  geom_text(aes(label = label, color = is_fuser), vjust = 1.6, size = 3) +
+  scale_color_manual(values = c("black", "red")) +
+  labs(title = dataname,
+       x = "Median log(Regression MSE) +/- 20% quantiles",
+       y = "Algorithm") +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 10, face = "bold"),
+    axis.text.y = element_text(
+      size = 8,
+      face = ifelse(levels(score_summary$algorithm_label) == "proposed fuser (all)",
+                    "bold", "plain"),
+      color = ifelse(levels(score_summary$algorithm_label) == "proposed fuser (all)",
+                    "red", "black")
+    ),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+# Print the plot
+print(gg)
+# Save the plot
+ggsave(paste0(dataname, "_taxa_mse_10_2_results.png"), 
+       plot = gg,
+       width = 6, 
+       height = 2,
+       dpi = 300)
+```
+
