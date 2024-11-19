@@ -8,8 +8,8 @@ library(paradox)
 library(checkmate)
 library(glmnet)
 
-#task.dt <- data.table::fread("HMPv35_otu_table_sub_log.csv")
-task.dt <- data.table::fread("HMPv35_sub_log.csv")
+#task.dt <- data.table::fread("/projects/genomic-ml/da2343/ml_project_1/data/microbe_ds/HMPv35_11_15.csv")
+task.dt <- data.table::fread("/projects/genomic-ml/da2343/ml_project_1/data/microbe_ds/necromass_11_15.csv")
 taxa_columns <- setdiff(names(task.dt), "Group_ID")
 new_column_names <- paste0("Taxa", taxa_columns)
 setnames(task.dt, old = taxa_columns, new = new_column_names)
@@ -223,9 +223,9 @@ mycv$param_set$values$folds=5
 #  mycv$instantiate(task)
 #}
 
-fuser.learner =  LearnerRegrFuser$new()
-fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
-fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
+#fuser.learner =  LearnerRegrFuser$new()
+#fuser.learner$param_set$values$lambda <- paradox::to_tune(0.001, 1, log=TRUE)
+#fuser.learner$param_set$values$gamma <- paradox::to_tune(0.001, 1, log=TRUE)
 #fuser.learner$param_set$values$tol <- paradox::to_tune(1e-10, 1e-2, log=TRUE)
 
 subtrain.valid.cv <- mlr3::ResamplingCV$new()
@@ -243,15 +243,15 @@ subtrain.valid.cv$param_set$values$folds <- 2
 #  fuser.learner.tuned )
 
 # Set up random search tuner
-random.search <- mlr3tuning::TunerRandomSearch$new()
-termination_criterion <- mlr3tuning::trm("evals", n_evals = 20)
-fuser.learner.tuned = mlr3tuning::auto_tuner(
-  tuner = random.search,
-  learner = fuser.learner,
-  resampling = subtrain.valid.cv,
-  measure = mlr3::msr("regr.mse"),
-  terminator = termination_criterion
-)
+#random.search <- mlr3tuning::TunerRandomSearch$new()
+#termination_criterion <- mlr3tuning::trm("evals", n_evals = 20)
+#fuser.learner.tuned = mlr3tuning::auto_tuner(
+#  tuner = random.search,
+#  learner = fuser.learner,
+#  resampling = subtrain.valid.cv,
+#  measure = mlr3::msr("regr.mse"),
+#  terminator = termination_criterion
+#)
 reg.learner.list <- list(
   mlr3learners::LearnerRegrCVGlmnet$new(),
   #mlr3learners::LearnerRegrGlmnet$new(),
@@ -261,20 +261,21 @@ reg.learner.list <- list(
   LearnerRegrFuser$new()
 )
 
+## For debugging
+#(debug.grid <- mlr3::benchmark_grid(
+#  task.list["Taxa356733"],
+#  reg.learner.list,
+#  mycv))
+#debug.result <- mlr3::benchmark(debug.grid)
+#debug.score.dt <- mlr3resampling::score(debug.result)
 
-(debug.grid <- mlr3::benchmark_grid(
-  task.list["Taxa356733"],
-  reg.learner.list,
-  mycv))
 future::plan("sequential")
-debug.result <- mlr3::benchmark(debug.grid)
-debug.score.dt <- mlr3resampling::score(debug.result)
-
 (reg.bench.grid <- mlr3::benchmark_grid(
   task.list,
   reg.learner.list,
   mycv))
-reg.dir <- "HMPv35-2024-05-09-350-benchmark-reg"
+
+reg.dir <- "necromass_11_15"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -288,13 +289,12 @@ job.table <- batchtools::getJobTable(reg=reg)
 chunks <- data.frame(job.table, chunk=1)
 batchtools::submitJobs(chunks, resources=list(
   walltime = 60*480,#seconds
-  memory = 512,#megabytes per cpu
+  memory = 1024,#megabytes per cpu
   ncpus=1,  #>1 for multicore/parallel jobs.
   ntasks=1, #>1 for MPI jobs.
   chunks.as.arrayjobs=TRUE), reg=reg)
 
 batchtools::getStatus(reg=reg)
-
 jobs.after <- batchtools::getJobTable(reg=reg)
 table(jobs.after$error)
 jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][25:26]
@@ -307,6 +307,6 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
-score.dt <- mlr3resampling::score(bmr)
+save(bmr, file="/projects/genomic-ml/da2343/necromass/necromass_11_15-benchmark.RData")
 
-save(bmr, file="HMPv35-2024-05-09-350-benchmark.RData")
+
