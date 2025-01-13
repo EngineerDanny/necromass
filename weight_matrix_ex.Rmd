@@ -1,0 +1,262 @@
+
+```{r}
+library(ggplot2)
+library(data.table)
+```
+
+
+```{r}
+# Load required libraries first
+library(mlr3)
+library(mlr3resampling)
+library(data.table)
+
+# Try scoring with explicit parameters
+score.dt <- mlr3resampling::score(bmr)
+
+# If that doesn't work, try the direct method
+score.dt <- bmr$score()
+
+# Print the result to check
+print(head(score.dt))
+```
+
+```{r}
+# After loading the benchmark results
+load("~/Desktop/necromass/necromass_github/necromass_11_15-benchmark.RData")
+cat("Debug: Benchmark results loaded successfully\n")
+print("Debug: Structure of bmr object:")
+
+score.dt <- bmr$score()
+
+score.dt <- mlr3resampling::score(bmr)
+
+str(bmr)
+
+# Extract weights and create comparison plots
+library(data.table)
+library(ggplot2)
+cat("Debug: data.table and ggplot2 libraries loaded\n")
+
+bmr$score(predict_sets = NULL)
+# Get all results
+results <- as.data.table()
+cat("Debug: Converted benchmark results to data.table\n")
+print("Debug: Structure of results data.table:")
+str(results)
+
+# Initialize lists to store weights
+fuser_weights <- list()
+glmnet_weights <- list()
+
+# Extract weights for each task
+for (task_id in unique(results$task_id)) {
+  cat("Debug: Processing task_id", task_id, "\n")
+  
+  # Get fuser (all) model
+  fuser_model <- results[task_id == task_id & 
+                           learner_id == "regr.fuser" & 
+                           train.subsets == "all", ]$learner[[1]]$model
+  cat("Debug: Extracted fuser model for task_id", task_id, "\n")
+  print("Debug: Structure of fuser_model:")
+  str(fuser_model)
+  
+  # Get glmnet (same) model
+  glmnet_model <- results[task_id == task_id & 
+                            learner_id == "regr.cvglmnet" & 
+                            train.subsets == "same", ]$learner[[1]]$model
+  cat("Debug: Extracted glmnet model for task_id", task_id, "\n")
+  print("Debug: Structure of glmnet_model:")
+  str(glmnet_model)
+  
+  if (!is.null(fuser_model) && !is.null(glmnet_model)) {
+    # Extract fuser weights
+    if (fuser_model$model_type == "fuser") {
+      fuser_weights[[task_id]] <- fuser_model$beta
+      cat("Debug: Extracted fuser weights for task_id", task_id, "\n")
+      print("Debug: Fuser weights:")
+      print(fuser_weights[[task_id]])
+    }
+    
+    # Extract glmnet weights
+    glmnet_weights[[task_id]] <- coef(glmnet_model)
+    cat("Debug: Extracted glmnet weights for task_id", task_id, "\n")
+    print("Debug: glmnet weights:")
+    print(glmnet_weights[[task_id]])
+  } else {
+    cat("Debug: Missing fuser or glmnet model for task_id", task_id, "\n") 
+  }
+}
+
+cat("Debug: Weights extracted\n")
+print("Debug: Fuser weights:")
+print(fuser_weights)
+print("Debug: glmnet weights:")
+print(glmnet_weights)
+
+# Save weights to RData file
+save(fuser_weights, glmnet_weights, file = "model_weights.RData")
+cat("Debug: Weights saved to model_weights.RData\n")
+
+# Create weight comparison plot for a specific taxa
+for (taxa_id in names(fuser_weights)) {
+  cat("Debug: Creating weight comparison plot for taxa_id", taxa_id, "\n")
+  
+  # Extract weights for the specific taxa
+  fuser_w <- fuser_weights[[taxa_id]]
+  glmnet_w <- glmnet_weights[[taxa_id]]
+  
+  # Convert to data.frame for plotting
+  if (!is.null(fuser_w) && !is.null(glmnet_w)) {
+    cat("Debug: Fuser and glmnet weights available for taxa_id", taxa_id, "\n")
+    
+    # For fuser weights, take mean across groups if multiple exist
+    if (is.matrix(fuser_w)) {
+      fuser_w <- rowMeans(fuser_w)
+      cat("Debug: Calculated mean fuser weights across groups\n")
+    }
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      feature = rownames(glmnet_w)[-1],  # Remove intercept
+      fuser_weight = fuser_w[-1],        # Remove intercept
+      glmnet_weight = as.vector(glmnet_w)[-1]  # Remove intercept
+    )
+    cat("Debug: Created plot data frame\n")
+    
+    # Convert to long format for plotting
+    plot_data_long <- reshape2::melt(plot_data, 
+                                     id.vars = "feature",
+                                     variable.name = "model",
+                                     value.name = "weight")
+    cat("Debug: Converted plot data to long format\n")
+    
+    # Create plot
+    p <- ggplot(plot_data_long, aes(x = weight, y = reorder(feature, abs(weight)), 
+                                    color = model)) +
+      geom_point(position = position_dodge(width = 0.5)) +
+      theme_bw() +
+      labs(title = paste("Weight Comparison for", taxa_id),
+           x = "Weight Value",
+           y = "Feature") +
+      theme(axis.text.y = element_text(size = 8))
+    
+    cat("Debug: Weight comparison plot created for taxa_id", taxa_id, "\n")
+    print(p)
+    ggsave(paste0("weight_comparison_", taxa_id, ".png"), p, width = 10, height = 6)
+    cat("Debug: Weight comparison plot saved for taxa_id", taxa_id, "\n")
+  } else {
+    cat("Debug: Missing fuser or glmnet weights for taxa_id", taxa_id, "\n")
+  }
+}
+
+# Analyze weight differences
+differences <- data.table()
+
+for (taxa_id in names(fuser_weights)) {
+  cat("Debug: Analyzing weight differences for taxa_id", taxa_id, "\n")
+  
+  fuser_w <- fuser_weights[[taxa_id]]
+  glmnet_w <- glmnet_weights[[taxa_id]]
+  
+  if (!is.null(fuser_w) && !is.null(glmnet_w)) {
+    cat("Debug: Fuser and glmnet weights available for taxa_id", taxa_id, "\n")
+    
+    # Calculate mean fuser weights if multiple groups exist
+    if (is.matrix(fuser_w)) {
+      fuser_w <- rowMeans(fuser_w)
+      cat("Debug: Calculated mean fuser weights across groups\n")
+    }
+    
+    # Calculate differences
+    weight_diff <- abs(fuser_w - as.vector(glmnet_w))
+    cat("Debug: Calculated weight differences\n")
+    
+    # Add to differences table
+    differences <- rbind(differences,
+                         data.table(
+                           taxa_id = taxa_id,
+                           mean_diff = mean(weight_diff),
+                           max_diff = max(weight_diff)
+                         ))
+    cat("Debug: Added weight differences to differences table\n")
+  } else {
+    cat("Debug: Missing fuser or glmnet weights for taxa_id", taxa_id, "\n")
+  }
+}
+
+# Sort by mean difference
+diff_summary <- differences[order(-mean_diff)]
+cat("Debug: Weight differences analyzed and sorted\n")
+
+# Plot top N most different taxa
+N <- 3
+top_taxa <- diff_summary[1:N, taxa_id]
+cat("Debug: Top", N, "most different taxa:", paste(top_taxa, collapse = ", "), "\n")
+
+plots <- list()
+
+for (taxa_id in top_taxa) {
+  cat("Debug: Plotting weight comparison for taxa_id", taxa_id, "\n")
+  
+  # Extract weights for the specific taxa
+  fuser_w <- fuser_weights[[taxa_id]]
+  glmnet_w <- glmnet_weights[[taxa_id]]
+  
+  # Convert to data.frame for plotting
+  if (!is.null(fuser_w) && !is.null(glmnet_w)) {
+    cat("Debug: Fuser and glmnet weights available for taxa_id", taxa_id, "\n")
+    
+    # For fuser weights, take mean across groups if multiple exist
+    if (is.matrix(fuser_w)) {
+      fuser_w <- rowMeans(fuser_w)
+      cat("Debug: Calculated mean fuser weights across groups\n")
+    }
+    
+    # Create data frame for plotting
+    plot_data <- data.frame(
+      feature = rownames(glmnet_w)[-1],  # Remove intercept
+      fuser_weight = fuser_w[-1],        # Remove intercept
+      glmnet_weight = as.vector(glmnet_w)[-1]  # Remove intercept
+    )
+    cat("Debug: Created plot data frame\n")
+    
+    # Convert to long format for plotting
+    plot_data_long <- reshape2::melt(plot_data, 
+                                     id.vars = "feature",
+                                     variable.name = "model",
+                                     value.name = "weight")
+    cat("Debug: Converted plot data to long format\n")
+    
+    # Create plot
+    p <- ggplot(plot_data_long, aes(x = weight, y = reorder(feature, abs(weight)), 
+                                    color = model)) +
+      geom_point(position = position_dodge(width = 0.5)) +
+      theme_bw() +
+      labs(title = paste("Weight Comparison for", taxa_id),
+           x = "Weight Value",
+           y = "Feature") +
+      theme(axis.text.y = element_text(size = 8))
+    
+    cat("Debug: Weight comparison plot created for taxa_id", taxa_id, "\n")
+    plots[[taxa_id]] <- p
+  } else {
+    cat("Debug: Missing fuser or glmnet weights for taxa_id", taxa_id, "\n")
+  }
+}
+
+# Combine plots
+if (length(plots) > 0) {
+  combined_plot <- gridExtra::grid.arrange(grobs = plots, ncol = 1)
+  ggsave("top_weight_differences.png", combined_plot, 
+         width = 10, height = 4 * length(plots))
+  cat("Debug: Top weight difference plots saved to top_weight_differences.png\n")
+} else {
+  cat("Debug: No plots generated for top", N, "most different taxa\n")
+}
+
+# Print summary of differences
+cat("Summary of weight differences between fuser and glmnet models:\n")
+print(diff_summary)
+
+```

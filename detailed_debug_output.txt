@@ -1,0 +1,38 @@
+=== Starting Comprehensive Debug Analysis === 
+Current working directory: /Users/newuser/Desktop/necromass/necromass_github 
+
+=== Loading Libraries === 
+
+Trying to load package: data.table 
+Successfully loaded: data.table 
+Package version: 1.16.4 
+
+Trying to load package: ggplot2 
+Successfully loaded: ggplot2 
+Package version: 3.5.1 
+
+Trying to load package: gridExtra 
+Successfully loaded: gridExtra 
+Package version: 2.3 
+
+Trying to load package: Matrix 
+Successfully loaded: Matrix 
+Package version: 1.7.1 
+
+Trying to load package: mlr3 
+Failed to load: mlr3 
+
+Trying to load package: mlr3learners 
+Failed to load: mlr3learners 
+
+=== Loading Benchmark Results === 
+Attempting to load benchmark results... 
+Error loading benchmark results: 
+Error in readChar(con, 5L, useBytes = TRUE): cannot open the connection
+ 
+
+=== Checking Benchmark Object === 
+bmr object exists 
+bmr class: BenchmarkResult bmr class: R6 
+bmr structure: 
+Classes 'BenchmarkResult', 'R6' 
