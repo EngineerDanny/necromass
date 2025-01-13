@@ -11,11 +11,11 @@ library(data.table)
 
 ```{r}
 dataname <- "HMPv13"
-dataname <- "HMPv35"
-dataname <- "twinsuk"
-dataname <- "necromass"
-dataname <- "qa10394"
-dataname <- "MovingPictures"
+#dataname <- "HMPv35"
+#dataname <- "twinsuk"
+#dataname <- "necromass"
+#dataname <- "qa10394"
+#dataname <- "MovingPictures"
 
 score.dt <- mlr3resampling::score(bmr)
 score.wide <- dcast(
@@ -42,7 +42,7 @@ score.tall <- melt(
 score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
 
 # Add new column for log(regr.mse)
-score.tall[, log_regr.mse := log(regr.mse)]
+score.tall[, log_regr.mse := log10(regr.mse)]
 fwrite(score.tall, paste0( dataname, "_filtered.score.tall" ) )
 
 gg <- ggplot() +
@@ -61,7 +61,7 @@ gg <- ggplot() +
   scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE))  # Format x-axis labels
 
 print(gg)
-ggsave( paste0(dataname,   "_results_25_10.png"), plot = gg, 
+ggsave( paste0(dataname,   "_results_14_11.png"), plot = gg, 
        width = 30, height = 7, dpi = 200, limitsize = FALSE)
 ```
 
