@@ -5,204 +5,395 @@ file.edit(file.path(Sys.getenv("HOME"), ".Renviron"))
 
 
 ```{r}
-dataname <- "HMPv35"
+library(ggplot2)
+library(data.table)
+```
+
+```{r}
+dataname <- "HMPv13"
+#dataname <- "HMPv35"
+#dataname <- "twinsuk"
+#dataname <- "necromass"
+#dataname <- "qa10394"
+#dataname <- "MovingPictures"
 
 score.dt <- mlr3resampling::score(bmr)
-library(data.table)
 score.wide <- dcast(
   score.dt,
   train.subsets + test.fold + test.subset + task_id ~ algorithm,
   value.var="regr.mse")
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
 score.wide[is.na(fuser), fuser := featureless]
+
+# Filter out "other" condition
+score.wide <- score.wide[train.subsets != "other"]
+
+# Filter out "other" condition and rows where regr.mse is 0
+#score.wide <- score.wide[fuser != 0 & 
+#                         cv_glmnet != 0 & 
+#                        featureless != 0]
+
 score.tall <- melt(
   score.wide,
   measure=c("fuser", "cv_glmnet", "featureless"),
   variable.name="algorithm",
   value.name="regr.mse")
 # Set the order of the algorithms
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c( "fuser", "cv_glmnet", "featureless"))
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
 
-library(ggplot2)
-gg <- ggplot()+
+# Add new column for log(regr.mse)
+score.tall[, log_regr.mse := log10(regr.mse)]
+fwrite(score.tall, paste0( dataname, "_filtered.score.tall" ) )
+
+gg <- ggplot() +
   geom_text(aes(
-    regr.mse, train.subsets, label=train.subsets),
+    log_regr.mse, train.subsets, label=train.subsets),
     vjust=-0.5,
     hjust=1,
-    data=data.table(regr.mse=Inf, train.subsets=c("same","other","all")))+
+    data=data.table(log_regr.mse=Inf, train.subsets=c("same", "all"))) +
   geom_point(aes(
-    regr.mse, train.subsets, color=algorithm),
+    log_regr.mse, train.subsets, color=algorithm),
     shape=1,
-    data=score.tall)+
-  facet_grid(test.subset ~ task_id, scales="free")+
-  labs(title = dataname) +
-  scale_x_log10()
+    data=score.tall) +
+  facet_grid(test.subset ~ task_id, scales="free") +
+  labs(title = dataname,
+       x = "log(MSE)") +  # Updated x-axis label
+  scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE))  # Format x-axis labels
 
 print(gg)
-ggsave( paste0(dataname,   "_results.png"), plot = gg, 
+ggsave( paste0(dataname,   "_results_14_11.png"), plot = gg, 
        width = 30, height = 7, dpi = 200, limitsize = FALSE)
 ```
-
 
 ```{r}
 library(ggplot2)
 library(data.table)
 
-# Load and process data
+dataname <- "HMPv13"
 score.dt <- mlr3resampling::score(bmr)
 
-# Reshape data
+# Convert to wide format
 score.wide <- dcast(
   score.dt,
   train.subsets + test.fold + test.subset + task_id ~ algorithm,
-  value.var = "regr.mse"
-)
+  value.var="regr.mse")
 
-# Handle missing values
+# Handle NA values
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
 score.wide[is.na(fuser), fuser := featureless]
 
 # Filter out "other" condition
 score.wide <- score.wide[train.subsets != "other"]
 
-# Melt data to long format
+# Calculate performance difference between fuser and cv_glmnet
+score.wide[, perf_diff := cv_glmnet - fuser]
+
+# Select three representative taxa based on performance difference
+selected_taxa <- score.wide[, .(
+  mean_diff = mean(perf_diff)
+), by = task_id][order(mean_diff)]
+
+# Get one taxa from each category (considerably better, fairly better, worse)
+taxa_considerably_better <- selected_taxa[which.max(mean_diff), task_id]
+taxa_fairly_better <- selected_taxa[which.min(abs(mean_diff)), task_id]
+taxa_worse <- selected_taxa[which.min(mean_diff), task_id]
+
+selected_taxa_vector <- c(taxa_considerably_better, taxa_fairly_better, taxa_worse)
+
+# Filter the wide data for selected taxa
+score.wide_selected <- score.wide[task_id %in% selected_taxa_vector]
+
+# Convert to tall format
 score.tall <- melt(
-  score.wide,
-  measure = c("fuser", "cv_glmnet", "featureless"),
-  variable.name = "algorithm",
-  value.name = "regr.mse"
+  score.wide_selected,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+
+# Set the order of the algorithms
+score.tall$algorithm <- factor(score.tall$algorithm, 
+                             levels = c("fuser", "cv_glmnet", "featureless"))
+
+# Add new column for log(regr.mse)
+score.tall[, log_regr.mse := log(regr.mse)]
+
+# Create labels for the facets
+taxa_labels <- c(
+  setNames("Fuser Considerably Better", taxa_considerably_better),
+  setNames("Fuser Fairly Better", taxa_fairly_better),
+  setNames("Fuser Worse", taxa_worse)
 )
 
-# Calculate mean and standard deviation
-score.tall[, `:=`(
-  mean_regr.mse = mean(regr.mse),
-  xmin = mean(regr.mse) - var(regr.mse),
-  xmax = mean(regr.mse) + var(regr.mse)
-), by = .(train.subsets, test.subset, algorithm)]
-
-# Set algorithm order
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
-
-
-
-# Write processed data to CSV
-fwrite(score.tall, paste0(dataname, ".score.tall.csv"))
-
-# Create plot
-gg1 <- ggplot(score.tall, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
-  geom_errorbarh(aes(xmin = xmin, 
-                     xmax = xmax),
-                 height = 0.22, alpha = 0.7) +
-  geom_point(shape = 1) +
-  facet_grid(train.subsets ~ test.subset, 
-             labeller = labeller(test.subset = function(x) paste("Subset", x))) +
-  scale_color_discrete(name = "Test Fold") +
-  labs(x = "Mean Regression MSE", y = "Algorithm", title = dataname)
-
-# Print and save plot
-print(gg1)
-ggsave(paste0(dataname, "_results_2.png"), plot = gg1, 
-       width = 20, height = 5, dpi = 200, limitsize = FALSE)
-
-```
-
-
-```{r}
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
-# Read the CSV file
-data <- read.csv("HMPv35.score.tall.csv")
-
-# Prepare the data
-plot_data <- data %>%
-  group_by(train.subsets, test.subset, algorithm) %>%
-  summarise(
-    mean_regr.mse = mean(mean_regr.mse),
-    se_regr.mse = sd(mean_regr.mse) / sqrt(n())
-  ) %>%
-  ungroup()
-
 # Create the plot
-gg <- ggplot(plot_data, aes(x = mean_regr.mse, y = algorithm, color = algorithm)) +
-  geom_errorbarh(aes(xmin = mean_regr.mse - 2*se_regr.mse, 
-                     xmax = mean_regr.mse + 2*se_regr.mse),
-                 height = 0.2, alpha = 0.7) +
-  geom_point(size = 3) +
-  facet_grid(train.subsets ~ test.subset, 
-             labeller = labeller(test.subset = function(x) paste("Test Subset", x))) +
-  scale_x_log10(labels = scales::scientific) +
-  scale_color_brewer(palette = "Set1") +
-  labs(x = "Mean Regression MSE (log scale)",
-       y = "Algorithm",
-       title = "Performance Comparison of Algorithms Across Different Subsets",
-       subtitle = "Error bars represent standard error") +
-  theme_minimal() +
+gg <- ggplot() +
+  geom_text(aes(
+    log_regr.mse, train.subsets, label=train.subsets),
+    vjust=-0.5,
+    hjust=1,
+    data=data.table(log_regr.mse=Inf, train.subsets=c("same", "all"))) +
+  geom_point(aes(
+    log_regr.mse, train.subsets, color=algorithm),
+    shape=1,
+    size=2,
+    data=score.tall) +
+  facet_grid(test.subset ~ task_id, 
+             scales="free",
+             labeller=labeller(task_id=taxa_labels)) +
+  labs(title = paste(dataname, "- Selected Taxa Performance Comparison"),
+       x = "log(MSE)",
+       color = "Algorithm") +
+  scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE)) +
+  theme_bw() +
   theme(
-    panel.grid.major = element_line(color = "gray90"),
-    panel.grid.minor = element_line(color = "gray95"),
-    axis.text = element_text(size = 10),
-    axis.title = element_text(size = 12, face = "bold"),
-    strip.text = element_text(size = 11, face = "bold"),
-    legend.position = "bottom",
-    plot.title = element_text(size = 14, face = "bold"),
-    plot.subtitle = element_text(size = 12)
+    strip.text = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    legend.position = "bottom"
   )
 
-print(gg)
-# Save the plot
-ggsave("algorithm_performance_comparison.png", plot = gg, width = 12, height = 8, dpi = 300)
-
-```
-
-```{r}
-# Create the 'same' column by filtering and assigning regr.mse values where train.subsets is 'same'
-same_values <- score.tall[train.subsets == "same", .(test.fold, test.subset, algorithm, task_id, same = regr.mse)]
-all_values <- score.tall[train.subsets == "all", .(test.fold, test.subset, algorithm, task_id, all = regr.mse)]
-
-# Merge the two data.tables
-all_same_values <- merge(all_values, same_values, 
-                         by = c("test.fold", "test.subset", "algorithm", "task_id"),
-                         all.x = TRUE)  # Perform a left join
-
-# Group by test.fold and algorithm, calculate mean for all and same columns
-grouped_means <- all_same_values[, .(mean_all = mean(all, na.rm = TRUE),
-                                    mean_same = mean(same, na.rm = TRUE)),
-                                by = .(test.fold, algorithm)]
-
-grouped_means[, diff_all_same := mean_all - mean_same, by = .(algorithm)]
-grouped_means[, p_value := t.test(mean_same, mean_all)$p.value, by = .(algorithm)]
-grouped_means[, mean_diff_all_same := mean(diff_all_same),  by = .(algorithm)]
-
-# Keep only the required columns and add dataset name
-final_results <- grouped_means[, .(algorithm, p_value, mean_diff_all_same)]
-final_results[, dataset_name := "HMPv35"]
-
-# Print the result
-print(final_results)
-
-
-gg2 <- ggplot(final_results, aes(x = p_value, y = mean_diff_all_same, color = algorithm)) +
-  geom_label(aes(label = dataset_name)) +  
-  geom_hline(yintercept = 0, size = 0.1) + 
-  geom_vline(xintercept = 0, size = 0.1) + 
-  labs(title = "Mean Difference vs P-value", 
-       x = "P-value", y = "Mean Difference (all - same)", 
-       color = "Algorithm") +
-   theme_minimal()
-
 # Print the plot
-print(gg2)
+print(gg)
+
+# Save the plot
+ggsave(paste0(dataname, "_selected_taxa_comparison.png"), 
+       plot = gg,
+       width = 12, 
+       height = 7, 
+       dpi = 300)
 ```
 
 ```{r}
+# Calculate mean and quartiles (fixed version)
+score.tall[, `:=`(
+  mean_log_regr.mse = median(log_regr.mse),
+  q1 = quantile(log_regr.mse, 0.4),
+  q3 = quantile(log_regr.mse, 0.6)
+), by = .(train.subsets, test.subset, algorithm)]
+# Set algorithm order
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
+# Create plot
+gg1 <- ggplot(score.tall, aes(x = mean_log_regr.mse, y = algorithm)) +
+  geom_errorbarh(aes(xmin = q1, xmax = q3), height = 0.1) +
+  geom_point(shape = 1) +
+  facet_grid(train.subsets ~ test.subset, 
+             labeller = labeller(test.subset = function(x) paste("Subset", x)),
+             scales = "free_x") +
+  scale_color_discrete(name = "Algorithm") +
+  labs(x = "Median log(Regression MSE) +/- 10% quantiles", y = "Algorithm", title = dataname) 
+# Print and save plot
+print(gg1)
+ggsave(paste0(dataname, "_results_quartiles_pseudo.png"), plot = gg1, 
+       width = 20, height = 8, dpi = 300, limitsize = FALSE)
+```
 
-# Load necessary libraries
+```{r}
+## Assuming score.wide is your data frame
+setDT(score.wide)
+# Melt the data to long format
+score.long <- melt(score.wide, 
+                   id.vars = c("train.subsets", "test.fold", "test.subset", "task_id"),
+                   variable.name = "algorithm",
+                   value.name = "regr.mse")
+# Create 'all' and 'same' conditions
+score.long[, algorithm := paste0(algorithm, " (", train.subsets, ")")]
+
+score.long[, log_regr.mse := log(regr.mse)]
+# Calculate median and quantiles
+score.summary <- score.long[, .(
+  mean_log_regr.mse = median(log_regr.mse),
+  q1 = quantile(log_regr.mse, 0.4),
+  q3 = quantile(log_regr.mse, 0.6)
+), by = .(test.subset, algorithm)]
+# Remove any remaining NA entries, the 'NA' algorithm, and 'fuser_same'
+score.summary <- score.summary[!is.na(algorithm) & algorithm != "fuser (same)"]
+# Change "fuser (all)" to "proposed fuser (all)"
+score.summary[algorithm == "fuser (all)", algorithm := "proposed fuser (all)"]
+# Set algorithm order
+score.summary$algorithm <- factor(score.summary$algorithm, 
+                                  levels = c("featureless (same)", "featureless (all)", 
+                                             "cv_glmnet (same)", "cv_glmnet (all)", 
+                                             "proposed fuser (all)"))
+# Create formatted text for labels
+score.summary[, label := sprintf("%.2f±%.2f", mean_log_regr.mse, (q3 - q1)/2)]
+# Function to determine hjust and vjust
+get_just <- function(alg) {
+  list(hjust = 0.6, vjust = 1.4)
+}
+# Apply the function to create hjust and vjust columns
+score.summary[, c("hjust", "vjust") := get_just(algorithm), by = algorithm]
+# Add a column to determine which labels should be bold
+score.summary[, is_bold := algorithm == "proposed fuser (all)"]
+
+# Create the plot
+gg1 <- ggplot(score.summary, aes(x = mean_log_regr.mse, y = algorithm)) +
+  geom_errorbarh(aes(xmin = q1, xmax = q3), height = 0.1) +
+  geom_point(shape = 1) +
+  geom_text(aes(label = label, hjust = hjust, vjust = vjust, 
+                fontface = ifelse(is_bold, "bold", "plain")), size = 3) +
+  facet_wrap(~ test.subset, 
+             labeller = labeller(test.subset = function(x) paste("Subset", x)), 
+             ncol = 6,  scales = "free_x") +
+  labs(x = "Median log(Regression MSE) +/- 10% quantiles", y = "Algorithm", title = dataname) +
+  theme(legend.position = "none",
+        axis.text.y = element_text(face = ifelse(levels(score.summary$algorithm) == "proposed fuser (all)", 
+                                                 "bold", "plain")))
+
+print(gg1)
+ggsave(paste0(dataname, "_algo_mse_results.png"), 
+       plot = gg1, 
+       width = 10,
+       height = 4, 
+       dpi = 300, 
+       limitsize = FALSE)
+```
+
+
+
+```{r}
 library(data.table)
+library(ggplot2)
+library(ggrepel)
 
 # List of dataset names and corresponding CSV file names
-datasets <- list("twinsuk" = "twinsuk.score.tall.csv",
+datasets <- list("necromass" = "necromass.score.tall.csv",
+                "twinsuk" = "twinsuk_filtered.score.tall.csv",
+                "qa10394" = "qa10394_filtered.score.tall.csv",
+                "HMPv13" = "HMPv13_filtered.score.tall.csv",
+                "HMPv35" = "HMPv35_filtered.score.tall.csv")
+
+final_results <- data.table()
+
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  
+  score.tall <- fread(csv_file)
+  
+  # Calculate log MSE, handling potential negative or zero values
+  score.tall[, log_regr.mse := log(pmax(regr.mse, .Machine$double.eps))]
+  
+  # Get summary statistics for each fold
+  same_stats <- score.tall[train.subsets == "same" & algorithm == "cv_glmnet",
+                          .(same_median = median(log_regr.mse, na.rm = TRUE),
+                            same_q1 = quantile(log_regr.mse, 0.4, na.rm = TRUE),
+                            same_q3 = quantile(log_regr.mse, 0.6, na.rm = TRUE)),
+                          by = .(test.fold, task_id)]
+  
+  all_stats <- score.tall[train.subsets == "all" & algorithm == "fuser",
+                         .(all_median = median(log_regr.mse, na.rm = TRUE),
+                           all_q1 = quantile(log_regr.mse, 0.4, na.rm = TRUE),
+                           all_q3 = quantile(log_regr.mse, 0.6, na.rm = TRUE)),
+                         by = .(test.fold, task_id)]
+  
+  # Merge the statistics
+  fold_comparison <- merge(all_stats, same_stats,
+                          by = c("test.fold", "task_id"))
+  
+  # Calculate differences and handle potential infinite values
+  fold_comparison[, diff_median := all_median - same_median]
+  fold_comparison[, uncertainty := ((all_q3 - all_q1) + (same_q3 - same_q1))/2]
+  
+  # Remove any infinite values
+  fold_comparison <- fold_comparison[is.finite(diff_median) & is.finite(uncertainty)]
+  
+  if (nrow(fold_comparison) > 0) {  # Only proceed if we have valid data
+    # Calculate fold-level statistics
+    tryCatch({
+      p_val <- wilcox.test(fold_comparison$all_median, 
+                          fold_comparison$same_median, 
+                          paired = TRUE)$p.value
+    }, error = function(e) {
+      p_val <- NA
+    })
+    
+    # Calculate dataset-level statistics
+    dataset_stats <- data.table(
+      dataset_name = dataset_name,
+      mean_diff = mean(fold_comparison$diff_median, na.rm = TRUE),
+      se_diff = mean(fold_comparison$uncertainty, na.rm = TRUE),
+      mean_p_value = p_val,
+      se_p_value = sd(fold_comparison$uncertainty, na.rm = TRUE)
+    )
+    
+    # Handle potential infinite or NA values in log calculations
+    dataset_stats[, `:=`(
+      log_mean_p_value = ifelse(is.na(mean_p_value), NA, 
+                               log10(pmax(1e-10, mean_p_value))),
+      log_se_p_value = ifelse(is.na(mean_p_value) | mean_p_value == 0, NA,
+                             se_p_value / (mean_p_value * log(10)))
+    )]
+    
+    final_results <- rbind(final_results, dataset_stats, fill = TRUE)
+  }
+}
+
+# Remove any rows with NA or infinite values
+final_results <- final_results[is.finite(mean_diff) & 
+                              is.finite(se_diff) & 
+                              is.finite(log_mean_p_value) & 
+                              is.finite(log_se_p_value)]
+
+if (nrow(final_results) > 0) {
+  # Calculate the y-axis limits based on the data
+  y_min <- min(final_results$mean_diff - final_results$se_diff, na.rm = TRUE)
+  y_max <- max(final_results$mean_diff + final_results$se_diff, na.rm = TRUE)
+  y_range <- y_max - y_min
+  y_padding <- y_range * 0.1  # Add 10% padding
+  
+  # Create the plot
+  gg <- ggplot(final_results, aes(x = log_mean_p_value, y = mean_diff, color = dataset_name)) +
+    geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_errorbar(aes(xmin = log_mean_p_value - log_se_p_value, 
+                      xmax = log_mean_p_value + log_se_p_value), width = 0.1) +
+    geom_errorbar(aes(ymin = mean_diff - se_diff, ymax = mean_diff + se_diff), width = 0.1) +
+    geom_point(size = 3) +
+    geom_label_repel(aes(label = dataset_name),
+                     box.padding = 0.5,
+                     point.padding = 0.5,
+                     force = 2,
+                     show.legend = FALSE) +
+    scale_x_continuous(
+      "<- highly significant -- log10(Mean p-value ± SE) -- not significant ->",
+      breaks = seq(-5, 0, by = 1),
+      limits = c(-5, 0.5)
+    ) +
+    scale_y_continuous(
+      "Median Log MSE Difference ± Quantile Range: fuser(all) - cv_glmnet(same)",
+      limits = c(y_min - y_padding, y_max + y_padding)
+    ) + 
+    theme_bw() +
+    theme(
+      legend.position = "none",
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_line(color = "gray95"),
+      plot.title = element_text(hjust = 0.5, size = 16),
+      axis.title.x = element_text(size = 10)
+    ) +
+    labs(title = "Is it beneficial to combine subsets?") +
+    annotate("text", x = -4.5, y = y_max, label = "Detrimental\nto combine", color = "darkred") +
+    annotate("text", x = -4.5, y = y_min, label = "Beneficial\nto combine", color = "darkgreen") +
+    annotate("text", x = log10(0.05), y = y_min, label = "p < 0.05", vjust = 1, color = "gray40")
+  
+  print(gg)
+} else {
+  warning("No valid data points to plot after filtering out NA and infinite values")
+}
+```
+
+```{r}
+
+fwrite(score.tall, file = paste0(dataname, "_score.tall.update.csv"))
+
+```
+
+```{r}
+# Load necessary libraries
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+
+# List of dataset names and corresponding CSV file names
+datasets <- list("necromass" = "necromass.score.tall.csv",
+                 "twinsuk" = "twinsuk.score.tall.csv",
                  "qa10394" = "qa10394.score.tall.csv",
                  "HMPv13" = "HMPv13.score.tall.csv",
                  "HMPv35" = "HMPv35.score.tall.csv"
@@ -218,80 +409,255 @@ for (dataset_name in names(datasets)) {
   # Read the data from the CSV file
   score.tall <- fread(csv_file)
   
-  # Create the 'same' column by filtering and assigning regr.mse values where train.subsets is 'same'
-  same_values <- score.tall[train.subsets == "same", .(test.fold, test.subset, algorithm, task_id, same = regr.mse)]
-  all_values <- score.tall[train.subsets == "all", .(test.fold, test.subset, algorithm, task_id, all = regr.mse)]
+  # Create the 'glmnet_all' column by filtering for cv_glmnet algorithm and 'all' train.subsets
+  glmnet_all_values <- score.tall[train.subsets == "all" & algorithm == "cv_glmnet", 
+                            .(test.fold, test.subset, task_id, glmnet_all = regr.mse)]
+  
+  # Create the 'fuser_all' column by filtering for fuser algorithm and 'all' train.subsets
+  fuser_all_values <- score.tall[train.subsets == "all" & algorithm == "fuser", 
+                           .(test.fold, test.subset, task_id, fuser_all = regr.mse)]
   
   # Merge the two data.tables
-  all_same_values <- merge(all_values, same_values, 
-                           by = c("test.fold", "test.subset", "algorithm", "task_id"),
-                           all.x = TRUE)  # Perform a left join
+  all_values <- merge(fuser_all_values, glmnet_all_values, 
+                           by = c("test.fold", "test.subset", "task_id"),
+                           all = TRUE)  # Perform a full outer join
   
-  # Group by test.fold and algorithm, calculate mean for all and same columns
-  grouped_means <- all_same_values[, .(mean_all = mean(all, na.rm = TRUE),
-                                       mean_same = mean(same, na.rm = TRUE)),
-                                   by = .(test.fold, algorithm)]
+  # Calculate the difference
+  all_values[, diff_fuser_glmnet := fuser_all - glmnet_all]
   
-  grouped_means[, diff_all_same := mean_all - mean_same, by = .(algorithm)]
-  grouped_means[, p_value := t.test(mean_same, mean_all)$p.value, by = .(algorithm)]
-  grouped_means[, mean_diff_all_same := mean(diff_all_same), by = .(algorithm)]
+  # Calculate statistics for each fold
+  fold_stats <- all_values[, .(
+    mean_diff = mean(diff_fuser_glmnet, na.rm = TRUE),
+    p_value = t.test(fuser_all, glmnet_all, paired = TRUE)$p.value
+  ), by = .(test.fold)]
   
-  # Keep only the required columns and add dataset name
-  dataset_results <- grouped_means[, .(algorithm, p_value, mean_diff_all_same)]
-  dataset_results[, dataset_name := dataset_name]
+  # Calculate overall statistics for the dataset
+  dataset_stats <- data.table(
+    dataset_name = dataset_name,
+    mean_diff = mean(fold_stats$mean_diff),
+    min_diff = mean(fold_stats$mean_diff) - sd(fold_stats$mean_diff),
+    max_diff = mean(fold_stats$mean_diff) + sd(fold_stats$mean_diff),
+    
+    mean_p_value = mean(fold_stats$p_value),
+    min_p_value = mean(fold_stats$p_value) - sd(fold_stats$p_value),
+    max_p_value = mean(fold_stats$p_value) + sd(fold_stats$p_value)
+  )
+  
+   # Add logarithmic versions of p-values
+  dataset_stats[, `:=`(
+    log_mean_p_value = log10(mean_p_value),
+    log_min_p_value = log10(min_p_value),
+    log_max_p_value = log10(max_p_value)
+  )]
   
   # Concatenate the results into final_results
-  final_results <- rbind(final_results, dataset_results, fill = TRUE)
+  final_results <- rbind(final_results, dataset_stats, fill = TRUE)
 }
 
+# Print the final results
+print(final_results)
 
-final_results$algorithm <- factor(final_results$algorithm, levels = c( "fuser", "cv_glmnet", "featureless" ))
-gg2 <- ggplot(final_results, aes(x = p_value, y = mean_diff_all_same, color = algorithm)) +
-  geom_label(aes(label = dataset_name), show.legend = T) +  
-  geom_hline(yintercept = 0, size = 0.1) + 
-  geom_vline(xintercept = 0, size = 0.1) + 
-  labs(title = "Mean Difference vs P-value", 
-       x = "P-value", y = "Mean Difference (all - same)", 
-       color = "Algorithm") 
-
-# Print the plot
-print(gg2)
-
-ggsave("mean_diff_vs_p_value.png", plot = gg2, 
-       width = 20, height = 5, dpi = 200, limitsize = FALSE)
-
-```
-
-
-```{r}
-score.tall2 <- melt(
-  score.wide,
-  measure=c("fuser", "cv_glmnet", "featureless"),
-  variable.name="algorithm",
-  value.name="regr.mse")
-
-score.tall2[, mean_regr.mse := mean(regr.mse), by = .(train.subsets, test.subset, algorithm)]
-score.tall2[, sd_regr.mse := sd(regr.mse), by = .(train.subsets, test.subset, algorithm)]
-
-score.tall2[, .(mean_regr.mse = mean(regr.mse), 
-                sd_regr.mse = sd(regr.mse)), 
-                by = .(train.subsets, test.subset, algorithm)]
-# Set the order of the algorithms
-score.tall2$algorithm <- factor(score.tall2$algorithm, levels = c("featureless", "cv_glmnet", "fuser"))
-head(score.tall2)
-
-
-# Create the ggplot
-gg <- ggplot(score.tall2, aes(x = algorithm, y = mean_regr.mse, group = test.fold)) +
-  stat_summary(fun.y = mean, geom = "point", color = "blue") +
-  stat_summary(fun.data = mean_cl_normal, geom = "errorbar", width = 0.2, color = "red") +
-  facet_grid(train.subsets ~ test.subset, labeller = labeller(test.subset = function(x) paste("Subset", x)))+
-  labs(x = "Algorithm", y = "Mean Regression MSE") 
- # scale_x_log10()
+# Create the plot
+gg <- ggplot(final_results, aes(x = log_mean_p_value, y = mean_diff, color = dataset_name)) +
+  geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_errorbar(aes(xmin = log_min_p_value, xmax = log_max_p_value)) +
+  geom_errorbar(aes(ymin = min_diff, ymax = max_diff)) +
+  geom_point(size = 1) +
+  geom_label_repel(aes(label = dataset_name, color = dataset_name), 
+                   box.padding = 0.5, 
+                   point.padding = 0.5, 
+                   force = 2,
+                   show.legend = FALSE) +
+  scale_x_continuous(
+    "<- highly significant -- log10(Mean p-value ± SD) -- not significant ->",
+    breaks = seq(-5, 0, by = 1),
+    limits = c(-5, 0)
+  ) +
+  scale_y_continuous(
+    "Mean MSE Difference ± SD: fuser(all) - cv_glmnet(all)"
+  ) +
+  theme_bw()+
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  ) +
+  labs(title = "Is fuser beneficial compared to cv_glmnet when both use all subsets?") +
+  annotate("text", x = -4.3, y = 0.04,  label = "fuser worse", color = "darkred" ) +
+  annotate("text", x = -4.4, y = -0.09, label = "fuser better", color = "darkgreen") +
+  annotate("text", x = log10(0.025), y = -0.09, label = "p < 0.05", vjust = 1, color = "gray40")
 
 # Print the plot
 print(gg)
+
+# Save the plot
+ggsave("mse_difference_vs_pvalue_for_fuserall_glmnetall.png", gg, width = 10, height = 8, dpi = 300)
+
 ```
+
+```{r}
+# Load necessary libraries
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+
+# List of dataset names and corresponding CSV file names
+datasets <- list("necromass" = "necromass.score.tall.csv",
+                 "twinsuk" = "twinsuk.score.tall.csv",
+                 "qa10394" = "qa10394.score.tall.csv",
+                 "HMPv13" = "HMPv13.score.tall.csv",
+                 "HMPv35" = "HMPv35.score.tall.csv"
+                 )
+
+# Small value to add before taking log
+small_value <- 1e-100
+
+# Function to create plot for a dataset
+create_plot <- function(results, dataset_name) {
+  gg <- ggplot(results, aes(x = p_value, y = diff)) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_vline(xintercept = 0.05, linetype = "dashed", color = "gray50") +
+    scale_x_log10(
+      "p-value",
+      breaks = scales::trans_breaks("log10", function(x) 10^x),
+      labels = scales::trans_format("log10", scales::math_format(10^.x))
+    ) +
+    scale_y_continuous(
+      "Log MSE Difference (fuser_all - cv_glmnet_same)"
+    ) +
+    facet_wrap(~ test.subset, scales = "free") +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_line(color = "gray95"),
+      plot.title = element_text(hjust = 0.5, size = 16)
+    ) +
+    labs(title = paste("Algorithm Comparison for", dataset_name))
+  
+  return(gg)
+}
+
+# Loop through each dataset
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  
+  # Read the data from the CSV file
+  score.tall <- fread(csv_file)
+  
+  # Compute log MSE for each task_id, test.fold, algorithm
+  score.tall[, log_mse := log(regr.mse + small_value)]
+  
+  # Filter for fuser_all and cv_glmnet_same
+  fuser_all <- score.tall[algorithm == "fuser" & train.subsets == "all"]
+  cv_glmnet_same <- score.tall[algorithm == "cv_glmnet" & train.subsets == "same"]
+  
+  # Merge the filtered data
+  comparison_data <- merge(fuser_all, cv_glmnet_same, 
+                           by = c("test.fold", "test.subset", "task_id"),
+                           suffixes = c("_fuser", "_cv_glmnet"))
+  
+  # Perform t-test of diff between algos for each task_id for each subset
+  results <- comparison_data[, {
+    test_result <- t.test(log_mse_fuser, log_mse_cv_glmnet, paired = TRUE)
+    .(diff = test_result$estimate,
+      p_value = test_result$p.value)
+  }, by = .(task_id, test.subset)]
+  
+  # Create the plot
+  gg <- create_plot(results, dataset_name)
+  
+  # Print the plot
+  print(gg)
+  
+  # Save the plot
+  ggsave(paste0("algorithm_comparison_", dataset_name, ".png"), gg, width = 10, height = 8, dpi = 300)
+}
+
+```
+```{r}
+# Load necessary libraries
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+
+# List of dataset names and corresponding CSV file names
+datasets <- list("necromass" = "necromass.score.tall.csv",
+                 "twinsuk" = "twinsuk.score.tall.csv",
+                 "qa10394" = "qa10394.score.tall.csv",
+                 "HMPv13" = "HMPv13.score.tall.csv",
+                 "HMPv35" = "HMPv35.score.tall.csv"
+                 )
+
+# Small value to add before taking log
+small_value <- 1e-10
+
+# Function to create plot for a dataset
+create_plot <- function(results, dataset_name) {
+  gg <- ggplot(results, aes(x = p_value, y = diff)) +
+    geom_point(alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    geom_vline(xintercept = 0.05, linetype = "dashed", color = "gray50") +
+    scale_x_log10(
+      "p-value",
+      breaks = scales::trans_breaks("log10", function(x) 10^x),
+      labels = scales::trans_format("log10", scales::math_format(10^.x))
+    ) +
+    scale_y_continuous(
+      "Log MSE Difference (fuser_all - cv_glmnet_all)"
+    ) +
+    facet_wrap(~ test.subset, scales = "free") +
+    theme_bw() +
+    theme(
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_line(color = "gray95"),
+      plot.title = element_text(hjust = 0.5, size = 16)
+    ) +
+    labs(title = paste("Algorithm Comparison for", dataset_name, "(All Subsets)"))
+  
+  return(gg)
+}
+
+# Loop through each dataset
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  
+  # Read the data from the CSV file
+  score.tall <- fread(csv_file)
+  
+  # Compute log MSE for each task_id, test.fold, algorithm
+  score.tall[, log_mse := log(regr.mse + small_value)]
+  
+  # Filter for fuser_all and cv_glmnet_all
+  fuser_all <- score.tall[algorithm == "fuser" & train.subsets == "all"]
+  cv_glmnet_all <- score.tall[algorithm == "cv_glmnet" & train.subsets == "all"]
+  
+  # Merge the filtered data
+  comparison_data <- merge(fuser_all, cv_glmnet_all, 
+                           by = c("test.fold", "test.subset", "task_id"),
+                           suffixes = c("_fuser", "_cv_glmnet"))
+  
+  # Perform t-test of diff between algos for each task_id for each subset
+  results <- comparison_data[, {
+    test_result <- t.test(log_mse_fuser, log_mse_cv_glmnet, paired = TRUE)
+    .(diff = test_result$estimate,
+      p_value = test_result$p.value)
+  }, by = .(task_id, test.subset)]
+  
+  # Create the plot
+  gg <- create_plot(results, dataset_name)
+  
+  # Print the plot
+  print(gg)
+  
+  # Save the plot with a new name
+  ggsave(paste0("algorithm_comparison_all_", dataset_name, ".png"), gg, width = 10, height = 8, dpi = 300)
+}
+
+```
+
 
 
 
@@ -372,12 +738,3 @@ print(gg)
 dev.off()
 ```
 
-```{r}
-## TODO compute p-value for difference between cv_glmnet and featureless
-gg2 <- ggplot()+
-  geom_point(aes(
-    cv_glmnet-featureless, train.subsets),
-    data=score.wide)+
-  facet_grid(. ~ test.subset, labeller=label_both)
-print(gg2)
-```
