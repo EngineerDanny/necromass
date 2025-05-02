@@ -1,0 +1,65 @@
+---
+title: "Improved Mean Weight Differences Analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries}
+library(ggplot2)
+library(dplyr)
+library(viridis)
+```
+
+```{r load_data}
+# Load the data
+load("weights_analysis_necromass.RData")
+
+# Set up theme
+theme_custom <- theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    axis.text = element_text(size = 9),
+    legend.position = "right",  # Move legend to right side
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 8)
+  )
+
+# Select top taxa by mean difference for visualization
+top_taxa <- differences %>%
+  group_by(taxa_id) %>%
+  summarize(mean_diff = mean(mean_diff)) %>%
+  arrange(desc(mean_diff)) %>%
+  head(6) %>%  # Limit to top 6 taxa
+  pull(taxa_id)
+
+# Filter data for top taxa
+differences_filtered <- differences %>%
+  filter(taxa_id %in% top_taxa)
+```
+
+```{r create_plot}
+p1 <- ggplot(differences_filtered, 
+       aes(x = factor(test_subset), y = mean_diff, 
+           color = taxa_id, shape = comparison)) +  # Swap shape and color mappings
+  geom_point(size = 3, alpha = 0.7) +
+  geom_line(aes(group = interaction(comparison, taxa_id)), alpha = 0.5) +
+  scale_color_viridis(discrete = TRUE, name = "Taxa") +
+  scale_shape_manual(values = c(16, 17), name = "Comparison") +  # Limited shapes
+  labs(
+    title = "Mean Weight Differences Across Test Subsets",
+    x = "Test Subset",
+    y = "Mean Difference"
+  ) +
+  theme_custom +
+  guides(color = guide_legend(ncol = 1))  # Force single column legend
+
+# Display the plot
+print(p1)
+
+# Save the plot
+ggsave("improved_differences_plot.pdf", p1, width = 10, height = 6)
+```

@@ -1,0 +1,79 @@
+```{r}
+library(tidyverse)
+library(broom)
+
+raw <- read_csv("necromass_11_15.score.tall.csv", show_col_types = FALSE)
+
+valid_pairs <- tribble(
+  ~algorithm,   ~train.subsets,
+  "fuser",      "all",
+  "cv_glmnet",  "all",
+  "cv_glmnet",  "same",
+  "featureless","same"
+)
+
+df <- raw %>% 
+  semi_join(valid_pairs, by = c("algorithm","train.subsets")) %>% 
+  mutate(pair = paste(algorithm, train.subsets, sep = "_")) %>% 
+  select(task_id, test.fold, pair, regr.mse, log_regr.mse) %>% 
+  group_by(task_id, pair) %>% 
+  summarise(across(c(regr.mse, log_regr.mse), mean, na.rm = TRUE), .groups = "drop")
+
+cat("Rows after filter & fold-avg:", nrow(df), "\n")
+
+wide <- df %>% 
+  pivot_wider(names_from = pair,
+              values_from = c(regr.mse, log_regr.mse),
+              names_glue = "{pair}__{.value}")
+
+cat("Columns in wide data:", paste(colnames(wide), collapse = ", "), "\n")
+
+wide <- wide %>% 
+  mutate(
+    diff_mse_cv_glmnet_all    = `fuser_all__regr.mse`     - `cv_glmnet_all__regr.mse`,
+    diff_mse_cv_glmnet_same   = `fuser_all__regr.mse`     - `cv_glmnet_same__regr.mse`,
+    diff_mse_featureless_same = `fuser_all__regr.mse`     - `featureless_same__regr.mse`,
+    diff_log_cv_glmnet_all    = `fuser_all__log_regr.mse` - `cv_glmnet_all__log_regr.mse`,
+    diff_log_cv_glmnet_same   = `fuser_all__log_regr.mse` - `cv_glmnet_same__log_regr.mse`,
+    diff_log_featureless_same = `fuser_all__log_regr.mse` - `featureless_same__log_regr.mse`
+  )
+
+do_test <- function(v) tidy(wilcox.test(v, mu = 0))
+
+tests <- tibble(
+  comp = c("mse_vs_cv_all","mse_vs_cv_same","mse_vs_feat_same",
+           "log_vs_cv_all","log_vs_cv_same","log_vs_feat_same"),
+  vec  = list(wide$diff_mse_cv_glmnet_all,
+              wide$diff_mse_cv_glmnet_same,
+              wide$diff_mse_featureless_same,
+              wide$diff_log_cv_glmnet_all,
+              wide$diff_log_cv_glmnet_same,
+              wide$diff_log_featureless_same)
+) %>% 
+  mutate(stat = map(vec, do_test),
+         median_delta = map_dbl(vec, median, na.rm = TRUE),
+         win_rate = map_dbl(vec, ~mean(.x < 0, na.rm = TRUE))) %>% 
+  unnest(stat) %>% 
+  select(comp, median_delta, win_rate, p.value)
+
+print(tests)
+
+plot_df <- wide %>% 
+  select(task_id, starts_with("diff_")) %>% 
+  pivot_longer(-task_id, names_to = "metric_comp", values_to = "delta") %>% 
+  separate(metric_comp, into = c("type","dummy","competitor","metric"), fill = "right") %>% 
+  mutate(panel = if_else(type == "diff_mse", "MSE", "log-MSE"),
+         competitor = paste(competitor, metric, sep = "_") %>% str_replace("_NA$", ""))
+
+ggplot(plot_df, aes(competitor, delta)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_jitter(width = .15, alpha = .55) +
+  stat_summary(fun = median, geom = "point", shape = 18, size = 3) +
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = .1) +
+  facet_wrap(~panel, scales = "free_y") +
+  labs(x = NULL, y = "Δ  (fuser-all – competitor)") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+
+```
