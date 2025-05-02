@@ -1,3 +1,295 @@
+```{r}
+# Load required libraries
+library(data.table)
+library(mlr3)
+library(mlr3resampling)
+
+# Get scores from benchmark results and process
+score.dt <- as.data.table(mlr3resampling::score(bmr))
+score.dt <- score.dt[algorithm == "fuser" & train.subsets == "all"]
+
+# Helper function for processing fuser model weights
+process_fuser_weights <- function(fuser_model) {
+  if (is.null(fuser_model) || 
+      is.null(fuser_model$model_type) || 
+      fuser_model$model_type != "fuser") {
+    return(NULL)
+  }
+  
+  if (is.matrix(fuser_model$beta)) {
+    return(fuser_model$beta)
+  }
+  return(NULL)
+}
+
+# New function to analyze coefficient patterns
+analyze_coefficient_patterns <- function(row_values) {
+  # Get all unique values including zeros
+  unique_values <- unique(row_values)
+  n_unique <- length(unique_values)
+  
+  # Count occurrences of each unique value
+  value_counts <- table(row_values)
+  
+  # Determine pattern type
+  if (n_unique == 1) {
+    pattern_type <- "All Same"
+  } else if (n_unique == length(row_values)) {
+    pattern_type <- "All Different"
+  } else {
+    pattern_type <- "Fused"
+  }
+  
+  return(list(
+    pattern_type = pattern_type,
+    n_unique = n_unique
+  ))
+}
+
+# Initialize storage
+pattern_summary <- list()
+# Initialize summary data.table with reordered columns
+summary_dt <- data.table(
+  taxa = character(),
+  total_features = numeric(),
+  all_same_count = numeric(),
+  all_diff_count = numeric(),
+  fused_count = numeric(),
+  all_same_pct = numeric(),
+  all_diff_pct = numeric(),
+  fused_pct = numeric()
+)
+
+# Process each unique taxa
+for (taxa in unique(score.dt$task_id)) {
+  cat(sprintf("\nProcessing taxa: %s\n", taxa))
+  
+  # Get fuser model for this taxa
+  fuser_results <- score.dt[task_id == taxa][1]
+  
+  if (nrow(fuser_results) > 0) {
+    fuser_model <- fuser_results$learner[[1]]$model
+    fuser_matrix <- process_fuser_weights(fuser_model)
+    
+    if (!is.null(fuser_matrix)) {
+      features <- rownames(fuser_matrix)
+      
+      # Initialize pattern counters
+      patterns <- list(
+        "All Same" = list(count = 0),
+        "All Different" = list(count = 0),
+        "Fused" = list(count = 0)
+      )
+      
+      # Analyze each feature
+      n_features_analyzed <- 0
+      for (i in seq_along(features)) {
+        row_values <- fuser_matrix[i,]
+        result <- analyze_coefficient_patterns(row_values)
+        
+        patterns[[result$pattern_type]]$count <- 
+          patterns[[result$pattern_type]]$count + 1
+        n_features_analyzed <- n_features_analyzed + 1
+      }
+      
+      # Create summary for this taxa
+      pattern_summary[[taxa]] <- list(
+        patterns = patterns,
+        total_features = n_features_analyzed,
+        percentages = sapply(patterns, function(x) 
+          round(x$count / n_features_analyzed * 100, 1))
+      )
+      
+      # Add row to summary data.table with reordered columns
+      summary_dt <- rbindlist(list(summary_dt, data.table(
+        taxa = taxa,
+        total_features = n_features_analyzed,
+        all_same_count = patterns[["All Same"]]$count,
+        all_diff_count = patterns[["All Different"]]$count,
+        fused_count = patterns[["Fused"]]$count,
+        all_same_pct = pattern_summary[[taxa]]$percentages["All Same"],
+        all_diff_pct = pattern_summary[[taxa]]$percentages["All Different"],
+        fused_pct = pattern_summary[[taxa]]$percentages["Fused"]
+      )))
+      
+      # Print summary
+      cat(sprintf("\nPattern Summary for %s:\n", taxa))
+      cat(sprintf("Total Features Analyzed: %d\n", n_features_analyzed))
+      for (pattern_type in names(patterns)) {
+        cat(sprintf("\n%s Pattern:\n", pattern_type))
+        cat(sprintf("Count: %d (%0.1f%%)\n", 
+                   patterns[[pattern_type]]$count,
+                   pattern_summary[[taxa]]$percentages[pattern_type]))
+      }
+    }
+  }
+}
+
+# Save results
+dataset_name <- 'necromass'
+save(pattern_summary, summary_dt,
+     file = paste0("fuser_pattern_analysis_", dataset_name, ".RData"))
+```
+
+
+```{r}
+library(data.table)
+library(magrittr)  # Added for pipe operator
+
+# Function to analyze weight changes between groups
+analyze_group_pairs <- function(fuser_matrix) {
+  # Get number of groups
+  n_groups <- ncol(fuser_matrix)
+  
+  # Initialize lists to store results
+  weight_changes_list <- list()
+  edge_details_list <- list()
+  
+  # Generate all possible group pairs
+  group_pairs <- expand.grid(
+    g1 = 1:(n_groups-1),
+    g2 = 2:n_groups
+  ) %>% subset(g2 > g1)
+  
+  # Process each group pair
+  for(i in 1:nrow(group_pairs)) {
+    g1 <- group_pairs$g1[i]
+    g2 <- group_pairs$g2[i]
+    pair_name <- paste(g1, g2, sep="_")
+    
+    # Calculate weight changes
+    changes <- fuser_matrix[,g2] - fuser_matrix[,g1]
+    
+    # Find taxa with non-zero changes
+    changed_indices <- which(abs(changes) > 0)
+    
+    if(length(changed_indices) > 0) {
+      # Create weight changes table
+      weight_changes <- data.table(
+        Taxa = rownames(fuser_matrix)[changed_indices],
+        pair = pair_name,
+        change = changes[changed_indices]
+      )
+      weight_changes_list[[pair_name]] <- weight_changes
+      
+      # Create edge details table
+      if(length(changed_indices) > 1) {
+        # Generate all possible pairs of changed taxa
+        taxa_combinations <- combn(changed_indices, 2)
+        
+        edge_details <- data.table(
+          source_taxa = rownames(fuser_matrix)[taxa_combinations[1,]],
+          target_taxa = rownames(fuser_matrix)[taxa_combinations[2,]],
+          pair = pair_name,
+          source_weight1 = fuser_matrix[taxa_combinations[1,], g1],
+          source_weight2 = fuser_matrix[taxa_combinations[1,], g2],
+          target_weight1 = fuser_matrix[taxa_combinations[2,], g1],
+          target_weight2 = fuser_matrix[taxa_combinations[2,], g2]
+        )
+        edge_details_list[[pair_name]] <- edge_details
+      }
+    }
+  }
+  
+  # Combine results
+  weight_changes_dt <- rbindlist(weight_changes_list)
+  edge_details_dt <- rbindlist(edge_details_list)
+  
+  return(list(
+    weight_changes = weight_changes_dt,
+    edge_details = edge_details_dt
+  ))
+}
+
+# Function to print summary of results
+print_group_comparison_summary <- function(results) {
+  cat("\nWeight Changes Summary:\n")
+  for(pair in unique(results$weight_changes$pair)) {
+    cat(sprintf("\nGroup Pair %s:\n", pair))
+    subset_changes <- results$weight_changes[pair == pair]
+    print(subset_changes)
+  }
+  
+  cat("\nEdge Details Summary:\n")
+  for(pair in unique(results$edge_details$pair)) {
+    cat(sprintf("\nGroup Pair %s:\n", pair))
+    subset_edges <- results$edge_details[pair == pair]
+    print(subset_edges)
+  }
+}
+
+# Example usage:
+results <- analyze_group_pairs(fuser_matrix)
+# print_group_comparison_summary(results)
+
+# Save results to file
+save_results <- function(results, filename) {
+  save(results, file = filename)
+}
+
+generate_gephi_csvs <- function(edge_details, fuser_matrix, pair, output_prefix) {
+  # 1. Generate nodes CSV
+  all_taxa <- rownames(fuser_matrix)
+  nodes <- data.table(
+    Id = all_taxa,
+    Label = all_taxa,
+    Color = sprintf("#%02XFF00", floor(255 * (1 - seq_along(all_taxa)/length(all_taxa))))
+  )
+  
+  # Write nodes CSV
+  filename_nodes <- paste0(output_prefix, "_nodes.csv")
+  fwrite(nodes, file = filename_nodes)
+  
+  # 2. Generate CSV from edge_details for specific pair
+  edge_subset <- edge_details[pair == pair]
+  
+  # Create edge list with weights
+  gephi_edges <- data.table(
+    source = edge_subset$source_taxa,
+    target = edge_subset$target_taxa,
+    weight = abs(edge_subset$source_weight2)
+  )
+  
+  # Write edges CSV
+  filename1 <- paste0(output_prefix, "_changed_edges_", pair, ".csv")
+  fwrite(gephi_edges, file = filename1)
+  
+  # 3. Generate complete graph CSV
+  # Create all possible combinations using combn
+  taxa_combinations <- combn(all_taxa, 2)
+  
+  # Create complete edge list
+  complete_edges <- data.table(
+    source = taxa_combinations[1,],  # First row of combinations
+    target = taxa_combinations[2,],  # Second row of combinations
+    weight = 1
+  )
+  
+  # Write complete graph CSV
+  filename2 <- paste0(output_prefix, "_complete_graph.csv")
+  fwrite(complete_edges, file = filename2)
+  
+  # Return filenames and counts
+  return(list(
+    nodes_file = filename_nodes,
+    changed_edges_file = filename1,
+    complete_graph_file = filename2,
+    n_nodes = nrow(nodes),
+    n_changed_edges = nrow(gephi_edges),
+    n_complete_edges = nrow(complete_edges)
+  ))
+}
+
+
+# Example usage:
+files <- generate_gephi_csvs(
+   edge_details = results$edge_details,
+   fuser_matrix = fuser_matrix,
+   pair = "1_2",
+   output_prefix = "gephi"
+ )
+```
+
 
 ```{r}
 # Load required libraries
@@ -5,112 +297,233 @@ library(data.table)
 library(mlr3)
 library(mlr3resampling)
 
-# Score benchmark results
-score.dt <- bmr$score()
-results <- as.data.table(score.dt)
+# Get scores from benchmark results and process
+score.dt <- as.data.table(mlr3resampling::score(bmr))
+
+# Helper function for processing fuser model weights
+process_fuser_weights <- function(fuser_model, test_subset) {
+  cat("\nDebug: Entering process_fuser_weights\n")
+  
+  if (is.null(fuser_model)) {
+    cat("Debug: fuser_model is NULL\n")
+    return(NULL)
+  }
+  
+  if (is.null(fuser_model$model_type)) {
+    cat("Debug: model_type is NULL\n")
+    return(NULL)
+  }
+  
+  if (fuser_model$model_type != "fuser") {
+    cat("Debug: Not a fuser model\n")
+    return(NULL)
+  }
+  
+  if (is.matrix(fuser_model$beta)) {
+    cat(sprintf("\nDebug: Matrix found - dimensions: %d x %d\n", 
+                nrow(fuser_model$beta), 
+                ncol(fuser_model$beta)))
+    cat("\nDebug: First few rows of beta matrix:\n")
+    print(head(fuser_model$beta))
+    return(fuser_model$beta)
+  }
+  
+  cat("Debug: beta is not a matrix\n")
+  return(NULL)
+}
+
+# Function to analyze coefficient patterns
+analyze_coefficient_patterns <- function(row_values) {
+  cat("\nDebug: Analyzing row values:\n")
+  print(row_values)
+  
+  # Get all unique values including zeros
+  unique_values <- unique(row_values)
+  n_unique <- length(unique_values)
+  
+  cat(sprintf("\nDebug: Number of unique values: %d\n", n_unique))
+  cat("Debug: Unique values:\n")
+  print(unique_values)
+  
+  # Determine pattern type
+  if (n_unique == 1) {
+    pattern_type <- "All Same"
+  } else if (n_unique == length(row_values)) {
+    pattern_type <- "All Different"
+  } else {
+    pattern_type <- "Fused"
+  }
+  
+  cat(sprintf("Debug: Pattern type determined: %s\n", pattern_type))
+  
+  return(list(
+    pattern_type = pattern_type,
+    n_unique = n_unique
+  ))
+}
 
 # Initialize storage
-weights_list <- list()
-differences <- data.table()
+pattern_summary <- list()
+# Initialize summary data.table
+summary_dt <- data.table(
+  taxa = character(),
+  total_features = numeric(),
+  all_same_count = numeric(),
+  all_diff_count = numeric(),
+  fused_count = numeric(),
+  all_same_pct = numeric(),
+  all_diff_pct = numeric(),
+  fused_pct = numeric()
+)
 
 # Process each unique taxa
-for (taxa in unique(results$task_id)) {
-  # Extract models for this taxa
-  glmnet_results <- results[task_id == taxa & 
-                           learner_id == "regr.cv_glmnet"]
+for (taxa in unique(score.dt$task_id)) {
+  cat(sprintf("\n\nProcessing taxa: %s\n", taxa))
   
-  fuser_results <- results[task_id == taxa & 
-                          learner_id == "regr.fuser"]
+  # Get fuser model for this taxa
+  fuser_results <- score.dt[task_id == taxa & 
+                           algorithm == "fuser" &
+                           train.subsets == "all"][1]
   
-  if (nrow(glmnet_results) > 0 && nrow(fuser_results) > 0) {
-    # Get the models
-    glmnet_model <- glmnet_results$learner[[1]]$model
+  cat(sprintf("\nDebug: Found %d fuser results for taxa\n", nrow(fuser_results)))
+  
+  if (nrow(fuser_results) > 0) {
     fuser_model <- fuser_results$learner[[1]]$model
+    cat("\nDebug: Fuser model structure:\n")
+    str(fuser_model)
     
-    if (!is.null(fuser_model) && !is.null(glmnet_model)) {
-      # Extract weights
-      fuser_w <- if (!is.null(fuser_model$model_type) && 
-                     fuser_model$model_type == "fuser") fuser_model$beta else NULL
-      glmnet_w <- coef(glmnet_model)
+    fuser_matrix <- process_fuser_weights(fuser_model, NULL)
+    
+    if (!is.null(fuser_matrix)) {
+      # Get dimensions
+      n_taxa <- nrow(fuser_matrix)
+      n_groups <- ncol(fuser_matrix)
       
-      if (!is.null(fuser_w) && !is.null(glmnet_w)) {
-        # Process fuser weights if matrix
-        if (is.matrix(fuser_w)) {
-          fuser_w <- rowMeans(fuser_w)
-        }
+      cat(sprintf("\nDebug: Matrix dimensions: %d taxa x %d groups\n", 
+                  n_taxa, n_groups))
+      
+      # Create 3D array and fill it
+      matrix_3d <- array(0, dim = c(n_taxa, n_taxa, n_groups))
+      
+      cat("\nDebug: Created 3D array with dimensions:\n")
+      print(dim(matrix_3d))
+      
+      # Fill 3D array and make symmetric within each group
+      for (g in 1:n_groups) {
+        cat(sprintf("\nDebug: Processing group %d\n", g))
         
-        # Convert sparse matrix to regular vector
-        glmnet_w_dense <- as.vector(glmnet_w)
-        names(glmnet_w_dense) <- rownames(glmnet_w)
+        # Extract group matrix
+        group_matrix <- matrix(0, n_taxa, n_taxa)
         
-        # Replace "." with 0 in glmnet weights
-        glmnet_w_dense[glmnet_w_dense == "."] <- 0
-        
-        # Remove intercept and Group_ID
-        glmnet_w_filtered <- glmnet_w_dense[!names(glmnet_w_dense) %in% 
-                                            c("(Intercept)", "Group_ID")]
-        
-        # Convert to numeric explicitly
-        glmnet_w_filtered <- as.numeric(glmnet_w_filtered)
-        names(glmnet_w_filtered) <- names(glmnet_w_dense)[!names(glmnet_w_dense) %in% 
-                                                           c("(Intercept)", "Group_ID")]
-        
-        # Get common features
-        common_features <- intersect(names(fuser_w), names(glmnet_w_filtered))
-        
-        if (length(common_features) > 0) {
-          # Subset both weight vectors to common features
-          fuser_w_aligned <- fuser_w[common_features]
-          glmnet_w_aligned <- glmnet_w_filtered[common_features]
-          
-          # Store weights
-          weights_list[[taxa]] <- list(
-            fuser = fuser_w_aligned,
-            glmnet = glmnet_w_aligned,
-            features = common_features
-          )
-          
-          # Calculate differences
-          weight_diff <- abs(fuser_w_aligned - glmnet_w_aligned)
-          differences <- rbind(differences,
-                             data.table(
-                               taxa_id = taxa,
-                               mean_diff = mean(weight_diff, na.rm = TRUE),
-                               max_diff = max(weight_diff, na.rm = TRUE),
-                               num_features = length(common_features),
-                               nonzero_glmnet = sum(glmnet_w_aligned != 0),
-                               nonzero_fuser = sum(fuser_w_aligned != 0)
-                             ))
-          
-          # Print summary for each taxa
-          cat("\nSummary for", taxa, ":\n")
-          cat("Number of common features:", length(common_features), "\n")
-          cat("Number of non-zero glmnet weights:", sum(glmnet_w_aligned != 0), "\n")
-          cat("Number of non-zero fuser weights:", sum(fuser_w_aligned != 0), "\n")
-          cat("Mean absolute difference:", mean(weight_diff, na.rm = TRUE), "\n")
-          cat("Max absolute difference:", max(weight_diff, na.rm = TRUE), "\n\n")
-          
-          # Print top 5 features by absolute difference
-          sorted_diff_idx <- order(weight_diff, decreasing = TRUE)[1:5]
-          cat("Top 5 features with largest differences:\n")
-          for (i in sorted_diff_idx) {
-            cat(sprintf("%s: fuser=%.4f, glmnet=%.4f, diff=%.4f\n",
-                       common_features[i],
-                       fuser_w_aligned[i],
-                       glmnet_w_aligned[i],
-                       weight_diff[i]))
+        # Fill upper and lower triangles
+        for (i in 1:n_taxa) {
+          for (j in 1:n_taxa) {
+            if (i != j) {  # Skip diagonal
+              group_matrix[i,j] <- fuser_matrix[i,g]
+              group_matrix[j,i] <- fuser_matrix[j,g]
+            }
           }
-          cat("\n")
         }
+        
+        cat("\nDebug: Initial group matrix (first 5x5):\n")
+        print(group_matrix[1:5, 1:5])
+        
+        # Average upper and lower triangles
+        for (i in 1:(n_taxa-1)) {
+          for (j in (i+1):n_taxa) {
+            avg_value <- (group_matrix[i,j] + group_matrix[j,i])/2
+            group_matrix[i,j] <- avg_value
+            group_matrix[j,i] <- avg_value
+          }
+        }
+        
+        cat("\nDebug: Symmetrized group matrix (first 5x5):\n")
+        print(group_matrix[1:5, 1:5])
+        
+        matrix_3d[,,g] <- group_matrix
+      }
+      
+      # Convert back to 2D matrix for pattern analysis
+      symmetric_matrix <- matrix(0, n_taxa, n_groups)
+      for (i in 1:n_taxa) {
+        for (g in 1:n_groups) {
+          # Use row means excluding diagonal
+          row_vals <- matrix_3d[i,-i,g]
+          symmetric_matrix[i,g] <- mean(row_vals)
+        }
+      }
+      
+      cat("\nDebug: Final symmetric matrix (first 5 rows):\n")
+      print(head(symmetric_matrix, 5))
+      
+      features <- rownames(symmetric_matrix)
+      
+      # Initialize pattern counters
+      patterns <- list(
+        "All Same" = list(count = 0),
+        "All Different" = list(count = 0),
+        "Fused" = list(count = 0)
+      )
+      
+      # Analyze each feature
+      n_features_analyzed <- 0
+      for (i in seq_along(features)) {
+        cat(sprintf("\nDebug: Analyzing feature %d\n", i))
+        
+        row_values <- symmetric_matrix[i,]
+        result <- analyze_coefficient_patterns(row_values)
+        
+        patterns[[result$pattern_type]]$count <- 
+          patterns[[result$pattern_type]]$count + 1
+        n_features_analyzed <- n_features_analyzed + 1
+      }
+      
+      cat("\nDebug: Pattern counts:\n")
+      print(patterns)
+      
+      # Create summary for this taxa
+      pattern_summary[[taxa]] <- list(
+        patterns = patterns,
+        total_features = n_features_analyzed,
+        percentages = sapply(patterns, function(x) 
+          round(x$count / n_features_analyzed * 100, 1))
+      )
+      
+      cat("\nDebug: Pattern summary for taxa:\n")
+      print(pattern_summary[[taxa]])
+      
+      # Add row to summary data.table
+      summary_dt <- rbindlist(list(summary_dt, data.table(
+        taxa = taxa,
+        total_features = n_features_analyzed,
+        all_same_count = patterns[["All Same"]]$count,
+        all_diff_count = patterns[["All Different"]]$count,
+        fused_count = patterns[["Fused"]]$count,
+        all_same_pct = pattern_summary[[taxa]]$percentages["All Same"],
+        all_diff_pct = pattern_summary[[taxa]]$percentages["All Different"],
+        fused_pct = pattern_summary[[taxa]]$percentages["Fused"]
+      )))
+      
+      # Print summary
+      cat(sprintf("\nPattern Summary for %s:\n", taxa))
+      cat(sprintf("Total Features Analyzed: %d\n", n_features_analyzed))
+      for (pattern_type in names(patterns)) {
+        cat(sprintf("\n%s Pattern:\n", pattern_type))
+        cat(sprintf("Count: %d (%0.1f%%)\n", 
+                   patterns[[pattern_type]]$count,
+                   pattern_summary[[taxa]]$percentages[pattern_type]))
       }
     }
   }
 }
 
-# Save weights and differences
-save(weights_list, differences, file = "model_weights.RData")
+# Print final summary
+cat("\nFinal Summary Data Table:\n")
+print(summary_dt)
 
-# Print overall summary
-cat("\nOverall Summary:\n")
-print(differences[order(-mean_diff)])
+# Save results
+dataset_name <- 'necromass'
+save(pattern_summary, summary_dt,
+     file = paste0("fuser_pattern_analysis_symmetric_", dataset_name, ".RData"))
+
 ```

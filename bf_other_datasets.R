@@ -38,7 +38,6 @@ for (col_name in new_column_names) {
   task.list[[task_id]] <- reg.task
 }
 
-
 LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                             inherit = LearnerRegr,
                             public = list( 
@@ -46,13 +45,13 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 ps = ps(
                                   lambda = p_dbl(0, default = 0.01, tags = "train"),
                                   gamma = p_dbl(0, default = 0.01, tags = "train"),
-                                  tol = p_dbl(lower = 0, upper = 1, default = 3e-3, tags = "train"),
-                                  num.it = p_int(default = 1000, tags = "train"),
+                                  tol = p_dbl(lower = 0, upper = 1, default = 1e-3, tags = "train"),
+                                  num.it = p_int(default = 2000, tags = "train"),
                                   intercept = p_lgl(default = FALSE, tags = "train"),
                                   scaling = p_lgl(default = T, tags = "train")
                                 )
                                 ps$values = list(lambda = 0.01, gamma = 0.01, 
-                                                 tol = 3e-3, num.it = 1000,
+                                                 tol = 1e-3, num.it = 2000,
                                                  intercept = FALSE, scaling = T)
                                 super$initialize(
                                   id = "regr.fuser",
@@ -61,131 +60,115 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   label = "Fuser",
                                   packages = c("mlr3learners", "fuser")
                                 )
+                              },
+                              # Helper function for thresholding that can be used in both train and predict
+                              threshold_values = function(x, tol, print_info = FALSE) {
+                                if(is.null(x)) return(NULL)
+                                x <- as.matrix(x)
+                                
+                                if(print_info) {
+                                  print("Before thresholding:")
+                                  print(head(x))
+                                  print(paste("Tolerance value:", tol))
+                                }
+                                
+                                # Handle NAs
+                                x[is.na(x)] <- 0
+                                
+                                # Round to fixed decimals based on tolerance
+                                decimals <- -floor(log10(tol))
+                                x <- round(x, decimals)
+                                
+                                # Zero out small values strictly
+                                x[abs(x) <= tol] <- 0
+                                
+                                if(print_info) {
+                                  print("After thresholding:")
+                                  print(head(x))
+                                }
+                                
+                                return(x)
                               }
                             ),
                             private = list(
                               .train = function(task) {
-                                # Assuming 'task' is a task object with data, feature names, and group information
                                 subset_ID <- task$col_roles$subset
                                 X_train <- as.matrix(task$data(cols = setdiff(task$feature_names, subset_ID)))
                                 y_train <- as.matrix(task$data(cols = task$target_names))
                                 group_ind <- as.matrix(task$data(cols = subset_ID))
-                                #print("Task summary:")
-                                #str(reg.task$col_roles)
-                                #print("group_ind")
-                                #print(group_ind)
-                                #print(typeof(group_ind))
-                                
-                                #group_ind <- task$groups$group
-                                #group_ind <- task$groups$subset
-                                k <- as.numeric(length(unique(group_ind))) # number of groups
-                                n.group <- min(table(group_ind)) # minimum samples per group across all groups
-                                
-                                
-                                # Initialize a new vector to store the balanced group indices
-                                balanced_group_ind <- integer(0)
-                                
-                                # Loop through each unique group and select 'n.group' indices for each
-                                for (grp in unique(group_ind)) {
-                                  grp_indices <- which(group_ind == grp)
-                                  balanced_group_ind <- c(balanced_group_ind, sample(grp_indices, n.group))
-                                }
-                                
-                                # Now 'balanced_group_ind' contains an equal number of indices for each group
-                                #group_ind <- group_ind[balanced_group_ind]
-                                
-                                # Print the final group index
-                                #print("updated group_ind")
-                                #print(group_ind)
-                                
-                                # Print the final group index
-                                #print("balanced_group_ind")
-                                #print(balanced_group_ind)
-                                
                                 pv <- self$param_set$get_values(tags = "train")
                                 
-                                # Create the matrices with appropriate dimensions
-                                
-                                #y <- matrix(y_train[balanced_group_ind], nrow = n.group, ncol = k, byrow = TRUE)
-                                #X <- X_train[balanced_group_ind, ]
-                                
-                                # Initialize glmnet_model before tryCatch
+                                k <- as.numeric(length(unique(group_ind)))
                                 glmnet_model <- mlr3learners::LearnerRegrCVGlmnet$new()$train(task)$model
                                 
                                 tryCatch({
-                                  # Use fuser::fusedLassoProximal
-                                  # Generate block diagonal matrices for L2 fusion approach
-                                  # transformed.data = generateBlockDiagonalMatrices(X, y, group_ind, matrix(1, k, k))
-                                  # Use L2 fusion to estimate betas (with near-optimal information sharing among groups)
-                                  # beta.estimate = fusedL2DescentGLMNet(transformed.data$X, transformed.data$X.fused, 
-                                  #                                     transformed.data$Y, group_ind, lambda=pv$lambda,
-                                  #                                     gamma=pv$gamma)
-                                  # colnames(beta.estimate) = as.character(sort(unique(group_ind)))
-                                  # beta.estimate = beta.estimate[,,1]
-                                  # colnames(beta.estimate) = as.character(sort(unique(group_ind)))
-                                  # print("beta.estimate")
-                                  # print(beta.estimate)
-                                  
-                                  # Use fuser::fusedLassoProximal
+                                  # Use model parameters from pv instead of hardcoded values
                                   fuser_params <- fuser::fusedLassoProximal(X_train, y_train, group_ind, 
-                                                                             lambda = 0.01, 
-                                                                             G = matrix(1, k, k), 
-                                                                             gamma = 0.1,
-                                                                             num.it = 20000,
-                                                                             intercept = T,
-                                                                             scaling = pv$scaling)
+                                                                            lambda = 0.1, 
+                                                                            G = matrix(1, k, k), 
+                                                                            gamma = 0.01,
+                                                                            num.it = 20000,
+                                                                            intercept = T,
+                                                                            tol = 1e-6,
+                                                                            scaling = pv$scaling)
+                                  
+                                  # Extract and threshold beta and intercept
                                   beta.estimate <- head(fuser_params, -1)
                                   intercept <- tail(fuser_params, 1)
                                   
-                                  # Update self$model with both beta.estimate and glmnet_model
-                                  self$model <- list(beta = beta.estimate, 
-                                                     intercept = intercept,
-                                                     glmnet_model = glmnet_model,
-                                                     model_type = "fuser",
-                                                     formula = task$formula(),
-                                                     data = task$data(),
-                                                     pv = pv,
-                                                     groups = group_ind)
+                                  # Process beta estimates
+                                  if(!is.null(beta.estimate)) {
+                                    beta.estimate <- as.matrix(beta.estimate)
+                                    colnames(beta.estimate) <- colnames(fuser_params)
+                                    
+                                    # Apply thresholding during training
+                                    beta.estimate <- self$threshold_values(beta.estimate, pv$tol)
+                                    intercept <- self$threshold_values(intercept, pv$tol)
+                                  }
+                                  
+                                  self$model <- list(
+                                    beta = beta.estimate,
+                                    intercept = intercept,
+                                    glmnet_model = glmnet_model,
+                                    model_type = "fuser",
+                                    formula = task$formula(),
+                                    data = task$data(),
+                                    pv = pv,
+                                    groups = group_ind
+                                  )
                                   
                                 }, error = function(e) {
                                   print("error")
                                   print(e)
-                                  #print("updated group_ind")
-                                 # print(group_ind)
-                                  # Update self$model with glmnet_model in case of error
-                                  self$model <- list(glmnet_model = glmnet_model,
-                                                     model_type = "glmnet",
-                                                     formula = task$formula(),
-                                                     data = task$data(),
-                                                     pv = pv,
-                                                     groups = group_ind)
+                                  self$model <- list(
+                                    glmnet_model = glmnet_model,
+                                    model_type = "glmnet",
+                                    formula = task$formula(),
+                                    data = task$data(),
+                                    pv = pv,
+                                    groups = group_ind
+                                  )
                                 })
                                 
-
                                 self$model
                               },
+                              
                               .predict = function(task) {
-                                ordered_features = function(task, learner) {
-                                  cols = names(learner$state$data_prototype)
-                                  task$data(cols = intersect(cols, task$feature_names))
-                                }
-                                
                                 subset_ID <- task$col_roles$subset
                                 X_test <- as.matrix(task$data(cols = setdiff(task$feature_names, subset_ID)))
                                 group_ind <- as.matrix(task$data(cols = subset_ID))
                                 new_X_test = as.matrix(task$data(cols = task$feature_names))
                                 X = apply(X_test, 2, as.numeric)
-                                #group_ind <- task$groups$group
-                               
+                                
                                 beta = self$model$beta
                                 intercept = self$model$intercept
+                                
+                                # No need to threshold again since values are already thresholded during training
                                 model_type <- self$model$model_type
                                 train_group_ind <- self$model$groups
                                 y.predict <- rep(NA, nrow(X))
                                 
                                 group_names <- colnames(beta)[unique(group_ind)]
-                                #print("group_names")
-                                #print(group_names)
                                 
                                 for (name in group_names) {
                                   group_rows <- which(group_ind == name)
@@ -197,20 +180,14 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   }
                                 }
                                 
-                                
-                                # Check for NAs or errors and use glmnet_model if needed
                                 if (any(is.na(y.predict))) {
                                   print("Used glmnet.")
-                                  #print(train_group_ind)
                                   y.predict.new <- as.vector(predict(self$model$glmnet_model, newx = new_X_test))
-                                  #print("NA values detected in predictions. Falling back to glmnet.")
-                                }else{
+                                } else {
                                   print("Used normal")
-                                  #print(train_group_ind)
                                   y.predict.new <- y.predict
                                 }
-                                #y.predict <- as.vector(predict(self$model$glmnet_model, newx = X_test))
-                                # Return the predictions as a numeric vector
+                                
                                 list(response = y.predict.new)
                               }
                             )
@@ -262,12 +239,12 @@ reg.learner.list <- list(
 )
 
 ## For debugging
-#(debug.grid <- mlr3::benchmark_grid(
-#  task.list["Taxa356733"],
-#  reg.learner.list,
-#  mycv))
-#debug.result <- mlr3::benchmark(debug.grid)
-#debug.score.dt <- mlr3resampling::score(debug.result)
+(debug.grid <- mlr3::benchmark_grid(
+  task.list["TaxaMycobacterium"],
+  reg.learner.list,
+  mycv))
+debug.result <- mlr3::benchmark(debug.grid)
+debug.score.dt <- mlr3resampling::score(debug.result)
 
 future::plan("sequential")
 (reg.bench.grid <- mlr3::benchmark_grid(
@@ -275,7 +252,7 @@ future::plan("sequential")
   reg.learner.list,
   mycv))
 
-reg.dir <- "necromass_11_15"
+reg.dir <- "necromass_29_04"
 reg <- batchtools::loadRegistry(reg.dir)
 unlink(reg.dir, recursive=TRUE)
 reg = batchtools::makeExperimentRegistry(
@@ -294,6 +271,7 @@ batchtools::submitJobs(chunks, resources=list(
   ntasks=1, #>1 for MPI jobs.
   chunks.as.arrayjobs=TRUE), reg=reg)
 
+
 batchtools::getStatus(reg=reg)
 jobs.after <- batchtools::getJobTable(reg=reg)
 table(jobs.after$error)
@@ -307,6 +285,13 @@ jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][
 
 ids <- jobs.after[is.na(error), job.id]
 bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
-save(bmr, file="/projects/genomic-ml/da2343/necromass/necromass_11_15-benchmark.RData")
+score.dt <- mlr3resampling::score(bmr)
+#tab = as.data.table(bmr)
+save(bmr, file="/projects/genomic-ml/da2343/necromass/necromass_29_04-benchmark.RData")
+
+#ids <- jobs.after[is.na(error), job.id]
+#bmr = mlr3batchmark::reduceResultsBatchmark(ids, reg = reg)
+#score.dt <- mlr3resampling::score(bmr)
+save(bmr, score.dt, file="/projects/genomic-ml/da2343/necromass/necromass_29_04-benchmark.RData")
 
 
