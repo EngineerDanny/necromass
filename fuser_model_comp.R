@@ -9,7 +9,6 @@ library(checkmate)
 library(glmnet)
 library(ggplot2)
 
-set.seed(42)
 task.dt <- data.table::fread("/projects/genomic-ml/da2343/ml_project_1/data/microbe_ds/necromass_11_15.csv")
 taxa_columns <- setdiff(names(task.dt), "Group_ID")
 new_column_names <- paste0("Taxa", taxa_columns)
@@ -177,7 +176,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                             )
 )
 
-
+set.seed(42)
 #mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
 #mycv$param_set$values$folds=5
 #for(task in task.list){
@@ -189,7 +188,80 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
 # First create the resampling
 mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
 mycv$param_set$values$folds=5
+mycv$instantiate(task.list[["TaxaTomentella"]])
+all_iterations <- which(mycv$instance$iteration.dt$train.subsets == "all")
+custom_all_cv <- ResamplingCustom$new()
+# Get all train and test sets first
+all_train_sets <- list()
+all_test_sets <- list()
+for (i in seq_along(all_iterations)) {
+  iter_idx <- all_iterations[i]
+  all_train_sets[[i]] <- mycv$train_set(iter_idx)
+  all_test_sets[[i]] <- mycv$test_set(iter_idx)
+}
+# Instantiate with the extracted sets
+custom_all_cv$instantiate(
+  task = task.list[["TaxaTomentella"]], 
+  train_sets = all_train_sets,
+  test_sets = all_test_sets
+)
 
+fuser.learner =  LearnerRegrFuser$new()
+fuser.learner$param_set$values$gamma <- paradox::to_tune(0.01, 1, log=TRUE)
+grid.search.5 <- mlr3tuning::TunerGridSearch$new()
+grid.search.5$param_set$values$resolution <- 5
+fuser.learner.tuned = mlr3tuning::auto_tuner(
+  tuner = grid.search.5,
+  learner = fuser.learner,
+  resampling = custom_all_cv,
+  measure = mlr3::msr("regr.mse"))
+tuning_result <- fuser.learner.tuned$train(task.list[["TaxaTomentella"]])
+gamma <- exp( fuser.learner.tuned$tuning_result$gamma ) 
+fuser.learner_fixed <- LearnerRegrFuser$new()
+fuser.learner_fixed$param_set$values$gamma <- gamma
+tuning_results <- fuser.learner.tuned$tuning_instance$archive$data
+tuning_results$gamma_actual <- exp(tuning_results$gamma)
+tuning_results <- tuning_results[order(tuning_results$gamma_actual)]
+tuning_results
+
+# Now plot the model complexity curve
+get_training_error <- function(gamma_value, task) {
+  learner <- LearnerRegrFuser$new()
+  learner$param_set$values$gamma <- gamma_value
+  learner$train(task)
+  pred <- learner$predict(task)
+  return(pred$score(mlr3::msr("regr.mse")))
+}
+# Apply this function to each gamma value
+tuning_results$train_mse <- sapply(tuning_results$gamma_actual, 
+                                   function(g) get_training_error(g, task.list[["TaxaTomentella"]]))
+
+
+min_val_idx <- which.min(tuning_results$regr.mse)
+min_gamma <- tuning_results$gamma_actual[min_val_idx]
+min_mse <- tuning_results$regr.mse[min_val_idx]
+
+p <- ggplot(tuning_results) +
+  geom_line(aes(x = gamma_actual, y = regr.mse, color = "Validation"), linewidth = 1) +
+  geom_point(aes(x = gamma_actual, y = regr.mse, color = "Validation"), size = 3) +
+  geom_line(aes(x = gamma_actual, y = train_mse, color = "Subtrain"), linewidth = 1) +
+  geom_point(aes(x = gamma_actual, y = train_mse, color = "Subtrain"), size = 3) +
+  geom_vline(xintercept = min_gamma, linetype = "dashed", color = "darkgrey") +
+  annotate("text", x = min_gamma, y = max(tuning_results$regr.mse, tuning_results$train_mse) * 1, 
+           label = paste("Optimal γ =", round(min_gamma, 3)), 
+           hjust = -0.1, color = "darkgrey") +
+  scale_x_continuous(
+    trans = scales::compose_trans(scales::log10_trans(), scales::reverse_trans()),
+    breaks = c(0.01, 0.1, 1.0),
+    labels = c("0.01", "0.1", "1.00")
+  ) +
+  labs(title = "TaxaTomentella",
+       x = "Gamma (γ)",
+       y = "Mean Squared Error",
+       color = "Loss") +
+  theme_minimal() +
+  scale_color_manual(values = c("Validation" = "blue", "Subtrain" = "red"))
+ggsave("TaxaTomentella_model_complexity_curve_2.png", p, width = 6, height = 5, dpi = 300)
 
 # Then set up your learners with fallback
 glmnet_learner <- mlr3learners::LearnerRegrCVGlmnet$new()
@@ -200,7 +272,9 @@ glmnet_learner$encapsulate <- c(train = "evaluate", predict = "evaluate")
 reg.learner.list <- list(
   glmnet_learner,
   mlr3::LearnerRegrFeatureless$new(),
-  LearnerRegrFuser$new()
+  #fuser.learner.tuned
+  fuser.learner_fixed
+  #LearnerRegrFuser$new()
 )
 
 ## For debugging
@@ -220,45 +294,3 @@ aggregate_results <- filtered_results[, .(
 ), by = .(learner_id, train.subsets)]
 
 print(aggregate_results)
-
-## For parallel real tests
-future::plan("sequential")
-(reg.bench.grid <- mlr3::benchmark_grid(
-  task.list,
-  reg.learner.list,
-  mycv))
-
-reg.dir <- "necromass_29_04"
-reg <- batchtools::loadRegistry(reg.dir)
-unlink(reg.dir, recursive=TRUE)
-reg = batchtools::makeExperimentRegistry(
-  file.dir = reg.dir,
-  seed = 1,
-  packages = "mlr3verse"
-)
-mlr3batchmark::batchmark(
-  reg.bench.grid, store_models = TRUE, reg=reg)
-job.table <- batchtools::getJobTable(reg=reg)
-chunks <- data.frame(job.table, chunk=1)
-batchtools::submitJobs(chunks, resources=list(
-  walltime = 60*480,#seconds
-  memory = 1024,#megabytes per cpu
-  ncpus=1,  #>1 for multicore/parallel jobs.
-  ntasks=1, #>1 for MPI jobs.
-  chunks.as.arrayjobs=TRUE), reg=reg)
-
-
-batchtools::getStatus(reg=reg)
-jobs.after <- batchtools::getJobTable(reg=reg)
-table(jobs.after$error)
-jobs.after[!is.na(error), .(error, task_id=sapply(prob.pars, "[[", "task_id"))][25:26]
-
-## 1: Error in approx(lambda, seq(lambda), sfrac) : \n  need at least two non-NA values to interpolate
-## 2: Error in elnet(xd, is.sparse, y, weights, offset, type.gaussian, alpha,  : \n  y is constant; gaussian glmnet fails at standardization step
-##    task_id
-## 1: Kaistia
-## 2: Kaistia
-
-save(bmr, file="/projects/genomic-ml/da2343/necromass/necromass_29_04-benchmark.RData")
-
-

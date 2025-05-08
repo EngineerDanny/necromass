@@ -7,7 +7,7 @@ library(data.table)
 
 ```{r}
 # Set dataset name
-#dataname <- "HMPv13"
+dataname <- "HMPv13"
 #dataname <- "HMPv35"
 #dataname <- "TwinsUK"
 #dataname <- "MovingPictures"
@@ -222,7 +222,7 @@ score.tall <- melt(
 # Set the order of the algorithms
 score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
 score.tall[, log_regr.mse := log10(regr.mse)]
-fwrite(score.tall, paste0( dataname, "_11_15.score.tall" ) )
+fwrite(score.tall, paste0( dataname, "_29_04.score.tall.csv" ) )
 
 gg <- ggplot() +
   geom_text(aes(
@@ -240,7 +240,7 @@ gg <- ggplot() +
   scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE))  # Format x-axis labels
 
 print(gg)
-ggsave( paste0(dataname,   "_results_8_11.png"), plot = gg, 
+ggsave( paste0(dataname,   "_results_29_04.png"), plot = gg, 
        width = 30, height = 7, dpi = 200, limitsize = FALSE)
 ```
 
@@ -253,10 +253,10 @@ library(ggplot2)
 
 # Read data
 #"TwinsUK" = "TwinsUK_11_15.score.tall.csv",
-#                "qa10394" = "qa10394_11_15.score.tall.csv",
-#                "MovingPictures" = "MovingPictures_11_15.score.tall.csv",
-#                "HMPv13" = "HMPv13_11_15.score.tall.csv",
-#                "HMPv35" = "HMPv35_11_15.score.tall.csv"
+#"qa10394" = "qa10394_11_15.score.tall.csv",
+#"MovingPictures" = "MovingPictures_11_15.score.tall.csv",
+#"HMPv13" = "HMPv13_11_15.score.tall.csv",
+#"HMPv35" = "HMPv35_11_15.score.tall.csv"
 dataname <- "necromass"
 score.tall <- fread("necromass_11_15.score.tall.csv")
 
