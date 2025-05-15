@@ -1,34 +1,42 @@
 
 ```{r}
-library(ggplot2)
 library(data.table)
+library(ggplot2)
+library(ggrepel)
 ```
 
 
 ```{r}
-# Set dataset name
 dataname <- "HMPv13"
-#dataname <- "HMPv35"
-#dataname <- "TwinsUK"
-#dataname <- "MovingPictures"
-#dataname <- "qa10394"
-#dataname <- "necromass"
+dataname <- "HMPv35"
+dataname <- "TwinsUK"
+dataname <- "MovingPictures"
+dataname <- "qa10394"
+dataname <- "necromass"
 
-# Get scores from benchmark results
 score.dt <- mlr3resampling::score(bmr)
-
-# Convert to wide format and handle missing values
 score.wide <- dcast(
   score.dt,
   train.subsets + test.fold + test.subset + task_id ~ algorithm,
-  value.var="regr.mse"
-)
+  value.var="regr.mse")
 score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
 score.wide[is.na(fuser), fuser := featureless]
-
-# Filter out "other" condition
 score.wide <- score.wide[train.subsets != "other"]
+score.tall <- melt(
+  score.wide,
+  measure=c("fuser", "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
 
+# Set the order of the algorithms
+score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
+score.tall[, log_regr.mse := log10(regr.mse)]
+
+fwrite(score.tall, paste0( dataname, "_11_05.score.tall.csv" ) )
+
+```
+
+```{r}
 # Calculate performance metrics
 score.wide[, `:=`(
   perf_diff = cv_glmnet - fuser,  # Positive means fuser is better
@@ -194,71 +202,11 @@ print(gg)
 
 ```
 
-```{r}
-dataname <- "HMPv13"
-dataname <- "HMPv35"
-dataname <- "TwinsUK"
-dataname <- "MovingPictures"
-dataname <- "qa10394"
-dataname <- "necromass"
-
-score.dt <- mlr3resampling::score(bmr)
-score.wide <- dcast(
-  score.dt,
-  train.subsets + test.fold + test.subset + task_id ~ algorithm,
-  value.var="regr.mse")
-score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
-score.wide[is.na(fuser), fuser := featureless]
-
-# Filter out "other" condition
-score.wide <- score.wide[train.subsets != "other"]
-score.tall <- melt(
-  score.wide,
-  measure=c("fuser", "cv_glmnet", "featureless"),
-  variable.name="algorithm",
-  value.name="regr.mse")
-
-
-# Set the order of the algorithms
-score.tall$algorithm <- factor(score.tall$algorithm, levels = c("fuser", "cv_glmnet", "featureless"))
-score.tall[, log_regr.mse := log10(regr.mse)]
-fwrite(score.tall, paste0( dataname, "_29_04.score.tall.csv" ) )
-
-gg <- ggplot() +
-  geom_text(aes(
-    log_regr.mse, train.subsets, label=train.subsets),
-    vjust=-0.5,
-    hjust=1,
-    data=data.table(log_regr.mse=Inf, train.subsets=c("same", "all"))) +
-  geom_point(aes(
-    log_regr.mse, train.subsets, color=algorithm),
-    shape=1,
-    data=score.tall) +
-  facet_grid(test.subset ~ task_id, scales="free") +
-  labs(title = dataname,
-       x = "log(MSE)") +  # Updated x-axis label
-  scale_x_continuous(labels = function(x) format(exp(x), scientific = TRUE))  # Format x-axis labels
-
-print(gg)
-ggsave( paste0(dataname,   "_results_29_04.png"), plot = gg, 
-       width = 30, height = 7, dpi = 200, limitsize = FALSE)
-```
-
-
 
 ```{r}
-# Load required libraries
-library(data.table)
-library(ggplot2)
-
 # Read data
-#"TwinsUK" = "TwinsUK_11_15.score.tall.csv",
-#"qa10394" = "qa10394_11_15.score.tall.csv",
-#"MovingPictures" = "MovingPictures_11_15.score.tall.csv",
-#"HMPv13" = "HMPv13_11_15.score.tall.csv",
-#"HMPv35" = "HMPv35_11_15.score.tall.csv"
 dataname <- "necromass"
-score.tall <- fread("necromass_11_15.score.tall.csv")
+score.tall <- fread("necromass_29_04.score.tall.csv")
 
 score.wide <- dcast(
   score.tall, 
@@ -430,9 +378,6 @@ gg <- ggplot(score_summary, aes(x = mean_log_mse, y = algorithm_label)) +
 
 # Print the plot
 print(gg)
-```
-
-```{r}
 
 # Save the plot
 ggsave(paste0(dataname, "_taxa_mse_04_29_results.png"), 
@@ -442,20 +387,14 @@ ggsave(paste0(dataname, "_taxa_mse_04_29_results.png"),
        dpi = 300)
 ```
 
-
 ```{r}
-# Load necessary libraries for data manipulation and plotting
-library(data.table)
-library(ggplot2)
-library(ggrepel)
-
 # Define datasets to analyze - mapping friendly names to CSV filenames
-datasets <- list("necromass" = "necromass_11_15.score.tall.csv",
-                "TwinsUK" = "TwinsUK_11_15.score.tall.csv",
-                "qa10394" = "qa10394_11_15.score.tall.csv",
-                "MovingPictures" = "MovingPictures_11_15.score.tall.csv",
-                "HMPv13" = "HMPv13_11_15.score.tall.csv",
-                "HMPv35" = "HMPv35_11_15.score.tall.csv")
+datasets <- list("necromass" = "necromass_11_05.score.tall.csv",
+                "TwinsUK" = "TwinsUK_11_05.score.tall.csv",
+                "qa10394" = "qa10394_11_05.score.tall.csv",
+                "MovingPictures" = "MovingPictures_11_05.score.tall.csv",
+                "HMPv13" = "HMPv13_11_05.score.tall.csv",
+                "HMPv35" = "HMPv35_11_05.score.tall.csv")
 
 # Initialize empty data.table for results
 final_results <- data.table()
@@ -545,22 +484,18 @@ gg <- ggplot(final_results, aes(x = mean_p_value, y =mean_diff, color = dataset_
 print(gg)
 
 # Save the plot
-ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetsame_04_29.png", gg, width = 6, height = 5, dpi = 300)
+#ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetsame_04_29.png", gg, width = 6, height = 5, dpi = 300)
 ```
 
 ```{r}
-# Load necessary libraries
-library(data.table)
-library(ggplot2)
-library(ggrepel)
 
 # List of dataset names and corresponding CSV file names
-datasets <- list("necromass" = "necromass_11_15.score.tall.csv",
-                "TwinsUK" = "TwinsUK_11_15.score.tall.csv",
-                "qa10394" = "qa10394_11_15.score.tall.csv",
-                "MovingPictures" = "MovingPictures_11_15.score.tall.csv",
-                "HMPv13" = "HMPv13_11_15.score.tall.csv",
-                "HMPv35" = "HMPv35_11_15.score.tall.csv")
+datasets <- list("necromass" = "necromass_11_05.score.tall.csv",
+                "TwinsUK" = "TwinsUK_11_05.score.tall.csv",
+                "qa10394" = "qa10394_11_05.score.tall.csv",
+                "MovingPictures" = "MovingPictures_11_05.score.tall.csv",
+                "HMPv13" = "HMPv13_11_05.score.tall.csv",
+                "HMPv35" = "HMPv35_11_05.score.tall.csv")
 
 # Initialize an empty data.table to store the final results
 final_results <- data.table()
@@ -568,22 +503,17 @@ final_results <- data.table()
 # Loop through each dataset
 for (dataset_name in names(datasets)) {
   csv_file <- datasets[[dataset_name]]
-  
-  # Read the data from the CSV file
   score.tall <- fread(csv_file)
-  
-  # Create the 'glmnet_all' column by filtering for cv_glmnet algorithm and 'all' train.subsets
   glmnet_all_values <- score.tall[train.subsets == "all" & algorithm == "cv_glmnet", 
                             .(test.fold, test.subset, task_id, glmnet_all = regr.mse)]
   
-  # Create the 'fuser_all' column by filtering for fuser algorithm and 'all' train.subsets
   fuser_all_values <- score.tall[train.subsets == "all" & algorithm == "fuser", 
                            .(test.fold, test.subset, task_id, fuser_all = regr.mse)]
   
   # Merge the two data.tables
   all_values <- merge(fuser_all_values, glmnet_all_values, 
                            by = c("test.fold", "test.subset", "task_id"),
-                           all = TRUE)  # Perform a full outer join
+                           all = TRUE)
   
   # Calculate the difference
   all_values[, diff_fuser_glmnet := fuser_all - glmnet_all]
@@ -598,12 +528,12 @@ for (dataset_name in names(datasets)) {
   dataset_stats <- data.table(
     dataset_name = dataset_name,
     mean_diff =  mean(fold_stats$mean_diff),
-    min_diff = mean(fold_stats$mean_diff) - sd(fold_stats$mean_diff)/sqrt(n_folds) ,  # -SE
-    max_diff = mean(fold_stats$mean_diff) + sd(fold_stats$mean_diff)/sqrt(n_folds) ,  # +SE
+    min_diff = mean(fold_stats$mean_diff) - sd(fold_stats$mean_diff) ,  # -SE
+    max_diff = mean(fold_stats$mean_diff) + sd(fold_stats$mean_diff) ,  # +SE
     
-    mean_p_value = log10( mean(fold_stats$p_value) ),
-    min_p_value = log10( mean(fold_stats$p_value) - sd(fold_stats$p_value)/sqrt(n_folds) ),  # -SE
-    max_p_value = log10( mean(fold_stats$p_value) + sd(fold_stats$p_value)/sqrt(n_folds) ) # +SE
+    mean_p_value =  mean(fold_stats$p_value),
+    min_p_value =  mean(fold_stats$p_value) - sd(fold_stats$p_value),  # -SE
+    max_p_value = mean(fold_stats$p_value) + sd(fold_stats$p_value) # +SE
   )
   
   # Concatenate the results into final_results
@@ -615,10 +545,8 @@ print(final_results)
 
 # Create the plot
 gg <- ggplot(final_results, aes(x = mean_p_value, y =mean_diff, color = dataset_name)) +
-  geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
+  #geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  #geom_errorbar(aes(xmin = min_p_value, xmax = max_p_value)) +
-  #geom_errorbar(aes(ymin = min_diff, ymax = max_diff)) +
   geom_segment(aes(x = min_p_value, xend = max_p_value, y = mean_diff, yend = mean_diff)) +
   geom_segment(aes(x = mean_p_value, xend = mean_p_value, y = min_diff, yend = max_diff)) +
   geom_point(size = 1) +
@@ -629,8 +557,8 @@ gg <- ggplot(final_results, aes(x = mean_p_value, y =mean_diff, color = dataset_
                    show.legend = FALSE) +
   scale_x_continuous(
     "<- highly significant -- log10(Mean p-value ± SE) -- not significant ->",
-    breaks = seq(-5, 0, by = 1),
-    limits = c(-5, 0)
+   # breaks = seq(-5, 0, by = 1),
+   # limits = c(-5, 0)
   ) +
   scale_y_continuous(
     "Mean MSE Difference ± SE: \nproposed_fuser(all) - cv_glmnet(all)"
@@ -651,7 +579,7 @@ gg <- ggplot(final_results, aes(x = mean_p_value, y =mean_diff, color = dataset_
 print(gg)
 
 # Save the plot
-ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetall_04_29.png", gg, width = 6, height = 5, dpi = 300)
-
+#ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetall_04_29.png", gg, width = 6, height = 5, dpi = 300)
+final_results
 ```
 
