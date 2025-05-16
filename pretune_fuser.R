@@ -49,7 +49,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   intercept = p_lgl(default = FALSE, tags = "train"),
                                   scaling = p_lgl(default = TRUE, tags = "train")
                                 )
-                                ps$values = list(lambda = 0.01, gamma = 0.1, 
+                                ps$values = list(lambda = 0.01, gamma = 1, 
                                                  tol = 1e-06, num.it = 2000,
                                                  intercept = FALSE, scaling = TRUE)
                                 super$initialize(
@@ -187,8 +187,6 @@ for (task_id in names(task.list)) {
   #cat("Tuned model for task:", task_id, "- Best lambda:", exp(best_params$lambda), "\n")
   break
 }
-
-
 best_params
 # Save just the gamma values to a file
 saveRDS(task_gammas, "qa10394_task_gammas_1.rds")
@@ -226,8 +224,8 @@ withr::with_seed(42, {
   )
   reg.learner.list <- list(
     glmnet_learner,
-    #fuser_learner,
-    fuser.learner.tuned,
+    fuser_learner,
+    #fuser.learner.tuned,
     mlr3::LearnerRegrFeatureless$new()
   )
   debug_cv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
@@ -236,7 +234,7 @@ withr::with_seed(42, {
   #debug_task <- task.list[["TaxaOvicillium"]]
   #debug_cv$instantiate(debug_task)
   (debug.grid <- mlr3::benchmark_grid(
-    task.list[["TaxaRhizobium"]],
+    task.list[["TaxaTrichoderma"]],
     reg.learner.list,
     debug_cv))
   debug.result <- mlr3::benchmark(debug.grid, callbacks = list())
@@ -253,35 +251,40 @@ withr::with_seed(42, {
 
 
 ## For real
-set.seed(42)
-mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
-mycv$param_set$values$folds=5
-mycv$param_set$values$subsets = "SA"
-future::plan("sequential")
-(reg.bench.grid <- mlr3::benchmark_grid(
-  task.list,
-  reg.learner.list,
-  mycv))
+withr::with_seed(42, { 
+  set.seed(42)
+  mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
+  mycv$param_set$values$folds=5
+  mycv$param_set$values$subsets = "SA"
+  future::plan("sequential")
+  (reg.bench.grid <- mlr3::benchmark_grid(
+    task.list,
+    reg.learner.list,
+    mycv))
+  
+  reg.dir <- paste0(dataname, "_11_05")
+  reg <- batchtools::loadRegistry(reg.dir)
+  unlink(reg.dir, recursive=TRUE)
+  reg = batchtools::makeExperimentRegistry(
+    file.dir = reg.dir,
+    seed = 1,
+    packages = "mlr3verse"
+  )
+  mlr3batchmark::batchmark(
+    reg.bench.grid, store_models = TRUE, reg=reg)
+  job.table <- batchtools::getJobTable(reg=reg)
+  chunks <- data.frame(job.table, chunk=1)
+  batchtools::submitJobs(chunks, resources=list(
+    walltime = 60*480,#seconds
+    memory = 1024,#megabytes per cpu
+    ncpus=1,  #>1 for multicore/parallel jobs.
+    ntasks=1, #>1 for MPI jobs.
+    chunks.as.arrayjobs=TRUE), reg=reg)
+  
+})
 
-reg.dir <- paste0(dataname, "_11_05")
-reg <- batchtools::loadRegistry(reg.dir)
-unlink(reg.dir, recursive=TRUE)
-reg = batchtools::makeExperimentRegistry(
-  file.dir = reg.dir,
-  seed = 1,
-  packages = "mlr3verse"
-)
-mlr3batchmark::batchmark(
-  reg.bench.grid, store_models = TRUE, reg=reg)
-job.table <- batchtools::getJobTable(reg=reg)
-chunks <- data.frame(job.table, chunk=1)
-batchtools::submitJobs(chunks, resources=list(
-  walltime = 60*480,#seconds
-  memory = 1024,#megabytes per cpu
-  ncpus=1,  #>1 for multicore/parallel jobs.
-  ntasks=1, #>1 for MPI jobs.
-  chunks.as.arrayjobs=TRUE), reg=reg)
 
+## Process Results
 batchtools::getStatus(reg=reg)
 jobs.after <- batchtools::getJobTable(reg=reg)
 table(jobs.after$error)
