@@ -92,7 +92,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                 beta.estimate <- fusedL2DescentGLMNet(X_train, y_train, group_ind,
                                                                       lambda = pv$lambda, 
                                                                       gamma = pv$gamma,
-                                                                      scaling = pv$scaling)
+                                                                      scaling = FALSE)
                                 intercept <- matrix(0, nrow=1, ncol=ncol(beta.estimate))
                                 colnames(intercept) <- colnames(beta.estimate)
                                 self$model <- list(
@@ -141,7 +141,7 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                                   print("Used glmnet.")
                                   y.predict <- as.vector(predict(self$model$glmnet_model, newx = new_X_test))
                                 } else {
-                                  print("Used normal")
+                                  #print("Used normal")
                                 }
                                 
                                 list(response = y.predict)
@@ -149,48 +149,6 @@ LearnerRegrFuser <- R6Class("LearnerRegrFuser",
                               
                             )
 )
-
-
-# Add these lines at the beginning of your script
-library(future)
-library(mlr3)
-#future::plan("multisession", workers = parallel::detectCores() - 1)
-withr::with_seed(42, {
-  subtrain.valid.cv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
-  subtrain.valid.cv$param_set$values$folds=2
-  subtrain.valid.cv$param_set$values$subsets = "A"
-  subtrain.valid.cv$instantiate(task.list[[task_id]])
-  grid.search <- mlr3tuning::TunerBatchGridSearch$new()
-  grid.search$param_set$values$resolution <- 5
-})
-
-task_gammas <- list()
-for (task_id in names(task.list)) {
-  task_fuser_learner <- LearnerRegrFuser$new()
-  #task_fuser_learner$param_set$values$gamma <- paradox::to_tune(0.01, 1, log=TRUE)
-  task_fuser_learner$param_set$values$gamma <- paradox::to_tune(levels = c(0.001, 0.01, 0.1, 1, 10))
-  #task_fuser_learner$param_set$values$lambda <- paradox::to_tune(0.01, 1, log=TRUE)
-  # Create tuning version to find best parameters
-  fuser.learner.tuned <- mlr3tuning::auto_tuner(
-    tuner = grid.search,
-    learner = task_fuser_learner,
-    resampling = subtrain.valid.cv,
-    measure = mlr3::msr("regr.mse")
-  )
-  print("got here")
-  tuning_result <- fuser.learner.tuned$train(task.list[[task_id]])
-  best_params <- fuser.learner.tuned$tuning_result
-  #task_gammas[[task_id]] <- exp(best_params$gamma)
-  task_gammas[[task_id]] <- best_params$gamma
-  #print(tuning_result$tuning_result
-  cat("Tuned model for task:", task_id, "- Best gamma:", best_params$gamma, "\n")
-  #cat("Tuned model for task:", task_id, "- Best lambda:", exp(best_params$lambda), "\n")
-  break
-}
-best_params
-# Save just the gamma values to a file
-saveRDS(task_gammas, "qa10394_task_gammas_1.rds")
-
 
 ## For debugging
 withr::with_seed(42, {
@@ -204,6 +162,7 @@ withr::with_seed(42, {
   task_fuser_learner <- LearnerRegrFuser$new()
   task_fuser_learner$param_set$values$gamma <- paradox::to_tune(levels = c(0.001, 0.01, 0.1, 1))
   #task_fuser_learner$param_set$values$lambda <- paradox::to_tune(0.01, 1, log=TRUE)
+  task_fuser_learner$param_set$values$lambda <- paradox::to_tune(levels = c(0.001, 0.01, 0.1, 1))
   fuser.learner.tuned <- mlr3tuning::auto_tuner(
     tuner = grid.search,
     learner = task_fuser_learner,
@@ -213,10 +172,10 @@ withr::with_seed(42, {
   glmnet_learner <- mlr3learners::LearnerRegrCVGlmnet$new()
   glmnet_learner$param_set$values$nfolds <- 3
   glmnet_learner$param_set$values$grouped <- T
-  glmnet_learner$encapsulate(
-    method   = "evaluate",                
-    fallback = mlr3::LearnerRegrFeatureless$new()
-  )
+  #glmnet_learner$encapsulate(
+  #  method   = "evaluate",                
+  #  fallback = mlr3::LearnerRegrFeatureless$new()
+  #)
   fuser_learner <- LearnerRegrFuser$new()
   fuser_learner$encapsulate(
     method   = "evaluate",                
@@ -224,13 +183,13 @@ withr::with_seed(42, {
   )
   reg.learner.list <- list(
     glmnet_learner,
-    fuser_learner,
+    #fuser_learner,
     #fuser.learner.tuned,
     mlr3::LearnerRegrFeatureless$new()
   )
   debug_cv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
   debug_cv$param_set$values$folds=5
-  debug_cv$param_set$values$subsets = "A"
+  debug_cv$param_set$values$subsets = "S"
   #debug_task <- task.list[["TaxaOvicillium"]]
   #debug_cv$instantiate(debug_task)
   (debug.grid <- mlr3::benchmark_grid(
@@ -249,27 +208,71 @@ withr::with_seed(42, {
 })
 
 
-
 ## For real
 withr::with_seed(42, { 
   set.seed(42)
+  subtrain.valid.cv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
+  subtrain.valid.cv$param_set$values$folds=2
+  subtrain.valid.cv$param_set$values$subsets = "A"
+  grid.search <- mlr3tuning::TunerBatchGridSearch$new()
+  grid.search$param_set$values$resolution <- 5
+  
+  task_fuser_learner <- LearnerRegrFuser$new()
+  task_fuser_learner$param_set$values$gamma <- paradox::to_tune(levels = c(0.001, 0.01, 0.1, 1))
+  task_fuser_learner$param_set$values$lambda <- paradox::to_tune(levels = c(0.001, 0.01, 0.1, 1))
+  fuser.learner.tuned <- mlr3tuning::auto_tuner(
+    tuner = grid.search,
+    learner = task_fuser_learner,
+    resampling = subtrain.valid.cv,
+    measure = mlr3::msr("regr.mse")
+  )
+  glmnet_learner <- mlr3learners::LearnerRegrCVGlmnet$new()
+  glmnet_learner$param_set$values$nfolds <- 3
+  glmnet_learner$param_set$values$grouped <- T
+  #glmnet_learner$encapsulate(
+  #  method   = "evaluate",                
+  #  fallback = mlr3::LearnerRegrFeatureless$new()
+  #)
+  reg.learner.list <- list(
+    glmnet_learner,
+    #fuser_learner,
+    #fuser.learner.tuned,
+    mlr3::LearnerRegrFeatureless$new()
+  )
+  
+  
   mycv <- mlr3resampling::ResamplingSameOtherSizesCV$new()
   mycv$param_set$values$folds=5
-  mycv$param_set$values$subsets = "SA"
+  mycv$param_set$values$subsets = "S"
   future::plan("sequential")
   (reg.bench.grid <- mlr3::benchmark_grid(
     task.list,
     reg.learner.list,
     mycv))
   
-  reg.dir <- paste0(dataname, "_11_05")
+  reg.dir <- paste0(dataname, "_16_05_same")
   reg <- batchtools::loadRegistry(reg.dir)
+  
   unlink(reg.dir, recursive=TRUE)
   reg = batchtools::makeExperimentRegistry(
     file.dir = reg.dir,
     seed = 1,
-    packages = "mlr3verse"
+    packages = c(
+      "data.table", 
+      "mlr3", 
+      "mlr3learners", 
+      "mlr3misc",
+      "fuser",
+      "R6", 
+      "paradox", 
+      "checkmate", 
+      "glmnet", 
+      "ggplot2", 
+      "Matrix"
+    )
+  
   )
+  reg$source = "/projects/genomic-ml/da2343/necromass/l2_fusion.R" 
   mlr3batchmark::batchmark(
     reg.bench.grid, store_models = TRUE, reg=reg)
   job.table <- batchtools::getJobTable(reg=reg)
@@ -302,4 +305,22 @@ aggregate_results <- debug.score.dt[, .(
 print(aggregate_results)
 
 
-save(bmr, file="/projects/genomic-ml/da2343/necromass/MovingPictures_11_05-bmr.RData")
+score.wide <- dcast(
+  debug.score.dt,
+  train.subsets + test.fold + test.subset + task_id ~ algorithm,
+  value.var="regr.mse")
+score.wide[is.na(cv_glmnet), cv_glmnet := featureless]
+#score.wide[is.na(tuned), tuned := featureless]
+score.tall <- melt(
+  score.wide,
+  #measure=c("tuned", "cv_glmnet", "featureless"),
+  measure=c( "cv_glmnet", "featureless"),
+  variable.name="algorithm",
+  value.name="regr.mse")
+score.tall$algorithm <- factor(score.tall$algorithm, 
+                               levels = c( "cv_glmnet", "featureless"))
+score.tall[, log_regr.mse := log10(regr.mse)]
+fwrite(score.tall, paste0( "/projects/genomic-ml/da2343/necromass/", dataname, "_16_05_same.score.tall.csv" ) )
+
+#save(bmr, file=paste0("/projects/genomic-ml/da2343/necromass/", dataname, "_16_05-bmr.RData"))
+

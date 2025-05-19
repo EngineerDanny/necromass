@@ -236,6 +236,19 @@ fusedL2DescentGLMNet <- function(X, y, groups, lambda = NULL, G = NULL, gamma=1,
     correction_factor = length(groups) / dim(transformed.x)[1]
   }
   
+  # Replace glmnet with cv.glmnet using minimal folds
+  #cv.result = cv.glmnet(transformed.x, transformed.y, 
+      #                  standardize=FALSE,
+     #                   nlambda = 10,
+    #                    lambda_min_ratio = 0.001,
+   #                     nfolds=3, ...)
+  #corrected_lambda = cv.result$lambda.1se * correction_factor
+  #coef.temp = coef(cv.result, s=corrected_lambda)
+  # Keep original matrix structure
+  #beta.mat = matrix(coef.temp[2:length(coef.temp)], 
+    #                dim(transformed.x)[2]/num.groups, 
+   #                 num.groups)
+  #return(beta.mat)
   
   glmnet.result = glmnet(transformed.x, 
                          transformed.y, 
@@ -244,11 +257,10 @@ fusedL2DescentGLMNet <- function(X, y, groups, lambda = NULL, G = NULL, gamma=1,
                          lambda=lambda*correction_factor, ...)
   beta.mat = matrix(NA, dim(transformed.x)[2]/num.groups, num.groups)
   
-
   coef.temp = coef(glmnet.result,
                    s=lambda*correction_factor ) # Correction for extra dimensions
   beta.mat = matrix(coef.temp[2:length(coef.temp)], 
-                    dim(transformed.x)[2]/num.groups, 
+                   dim(transformed.x)[2]/num.groups, 
                     num.groups)
   
   return(beta.mat)
