@@ -1,79 +1,234 @@
 ```{r}
-library(tidyverse)
-library(broom)
+library(data.table)
+library(ggplot2)
+library(ggrepel)
+```
 
-raw <- read_csv("necromass_11_15.score.tall.csv", show_col_types = FALSE)
 
-valid_pairs <- tribble(
-  ~algorithm,   ~train.subsets,
-  "fuser",      "all",
-  "cv_glmnet",  "all",
-  "cv_glmnet",  "same",
-  "featureless","same"
-)
+```{r}
+dataname <- "HMPv13"
+#dataname <- "HMPv35"
+#dataname <- "TwinsUK"
+#dataname <- "MovingPictures"
+#dataname <- "qa10394"
+#dataname <- "necromass"
 
-df <- raw %>% 
-  semi_join(valid_pairs, by = c("algorithm","train.subsets")) %>% 
-  mutate(pair = paste(algorithm, train.subsets, sep = "_")) %>% 
-  select(task_id, test.fold, pair, regr.mse, log_regr.mse) %>% 
-  group_by(task_id, pair) %>% 
-  summarise(across(c(regr.mse, log_regr.mse), mean, na.rm = TRUE), .groups = "drop")
+all_dt <- fread(paste0("/projects/genomic-ml/da2343/necromass/", dataname, "_16_05_all.score.tall.csv"))
+same_dt <- fread(paste0("/projects/genomic-ml/da2343/necromass/", dataname, "_16_05_same.score.tall.csv"))
+combined_dt <- rbindlist(list(all_dt, same_dt))
+combined_dt[algorithm == "tuned", algorithm := "fuser"]
+combined_dt <- combined_dt[!(algorithm == "featureless" & train.subsets == "all")]
 
-cat("Rows after filter & fold-avg:", nrow(df), "\n")
+fwrite(combined_dt, paste0( "/projects/genomic-ml/da2343/necromass/", dataname, "_16_05.score.tall.csv" ))
 
-wide <- df %>% 
-  pivot_wider(names_from = pair,
-              values_from = c(regr.mse, log_regr.mse),
-              names_glue = "{pair}__{.value}")
+combined_dt
+```
 
-cat("Columns in wide data:", paste(colnames(wide), collapse = ", "), "\n")
 
-wide <- wide %>% 
-  mutate(
-    diff_mse_cv_glmnet_all    = `fuser_all__regr.mse`     - `cv_glmnet_all__regr.mse`,
-    diff_mse_cv_glmnet_same   = `fuser_all__regr.mse`     - `cv_glmnet_same__regr.mse`,
-    diff_mse_featureless_same = `fuser_all__regr.mse`     - `featureless_same__regr.mse`,
-    diff_log_cv_glmnet_all    = `fuser_all__log_regr.mse` - `cv_glmnet_all__log_regr.mse`,
-    diff_log_cv_glmnet_same   = `fuser_all__log_regr.mse` - `cv_glmnet_same__log_regr.mse`,
-    diff_log_featureless_same = `fuser_all__log_regr.mse` - `featureless_same__log_regr.mse`
+
+```{r}
+# Define datasets to analyze - mapping friendly names to CSV filenames
+datasets <- list("necromass" = "necromass_16_05.score.tall.csv",
+                "TwinsUK" = "TwinsUK_16_05.score.tall.csv",
+                "qa10394" = "qa10394_16_05.score.tall.csv",
+                "MovingPictures" = "MovingPictures_16_05.score.tall.csv",
+                "HMPv13" = "HMPv13_16_05.score.tall.csv",
+                "HMPv35" = "HMPv35_16_05.score.tall.csv")
+
+# Initialize empty data.table for results
+final_results <- data.table()
+
+# Process each dataset
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  score.tall <- fread(paste0("/projects/genomic-ml/da2343/necromass/", csv_file))
+  summary(score.tall$log_regr.mse)
+  
+  # Extract MSE values for cv_glmnet algorithm with 'all' training subsets
+  glmnet_all_values <- score.tall[train.subsets == "all" & algorithm == "cv_glmnet", 
+                            .(test.fold, test.subset, task_id, glmnet_all = regr.mse)]
+  
+  # Extract MSE values for fuser algorithm with 'all' training subsets
+  fuser_all_values <- score.tall[train.subsets == "all" & algorithm == "fuser", 
+                           .(test.fold, test.subset, task_id, fuser_all = regr.mse)]
+  
+  # Merge fuser and glmnet results
+  all_values <- merge(fuser_all_values, glmnet_all_values, 
+                     by = c("test.fold", "test.subset", "task_id"),
+                     all = TRUE)
+  
+  # Calculate difference between fuser and glmnet MSE
+  all_values[, diff_fuser_glmnet := fuser_all - glmnet_all]
+  
+  # Calculate statistics for each fold
+  fold_stats <- all_values[, .(
+    mean_diff = mean(diff_fuser_glmnet, na.rm = TRUE),
+    p_value = t.test(fuser_all, glmnet_all, paired = TRUE)$p.value
+  ), by = .(test.fold)]
+  
+  n_folds <- nrow(fold_stats)  # number of folds for SE calculation
+  dataset_stats <- data.table(
+    dataset_name = dataset_name,
+    mean_diff =  mean(fold_stats$mean_diff),
+    min_diff = quantile(fold_stats$mean_diff, 0.025),  
+    max_diff = quantile(fold_stats$mean_diff, 0.975), 
+    
+    mean_p_value =  mean(fold_stats$p_value),
+    min_p_value = quantile(fold_stats$p_value, 0.025),  
+    max_p_value = quantile(fold_stats$p_value, 0.975)
   )
+  
+  # Add results to final_results data.table
+  final_results <- rbind(final_results, dataset_stats, fill = TRUE)
+}
 
-do_test <- function(v) tidy(wilcox.test(v, mu = 0))
+final_results
+# Transform p-values to log scale first
+final_results[, `:=`(
+  mean_log_p = log10(mean_p_value),
+  min_log_p = log10(min_p_value),
+  max_log_p = log10(max_p_value)
+)]
 
-tests <- tibble(
-  comp = c("mse_vs_cv_all","mse_vs_cv_same","mse_vs_feat_same",
-           "log_vs_cv_all","log_vs_cv_same","log_vs_feat_same"),
-  vec  = list(wide$diff_mse_cv_glmnet_all,
-              wide$diff_mse_cv_glmnet_same,
-              wide$diff_mse_featureless_same,
-              wide$diff_log_cv_glmnet_all,
-              wide$diff_log_cv_glmnet_same,
-              wide$diff_log_featureless_same)
-) %>% 
-  mutate(stat = map(vec, do_test),
-         median_delta = map_dbl(vec, median, na.rm = TRUE),
-         win_rate = map_dbl(vec, ~mean(.x < 0, na.rm = TRUE))) %>% 
-  unnest(stat) %>% 
-  select(comp, median_delta, win_rate, p.value)
-
-print(tests)
-
-plot_df <- wide %>% 
-  select(task_id, starts_with("diff_")) %>% 
-  pivot_longer(-task_id, names_to = "metric_comp", values_to = "delta") %>% 
-  separate(metric_comp, into = c("type","dummy","competitor","metric"), fill = "right") %>% 
-  mutate(panel = if_else(type == "diff_mse", "MSE", "log-MSE"),
-         competitor = paste(competitor, metric, sep = "_") %>% str_replace("_NA$", ""))
-
-ggplot(plot_df, aes(competitor, delta)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_jitter(width = .15, alpha = .55) +
-  stat_summary(fun = median, geom = "point", shape = 18, size = 3) +
-  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = .1) +
-  facet_wrap(~panel, scales = "free_y") +
-  labs(x = NULL, y = "Δ  (fuser-all – competitor)") +
+gg <- ggplot(final_results, aes(x = mean_log_p, y = mean_diff, color = dataset_name)) +
+  geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_segment(aes(x = min_log_p, xend = max_log_p, y = mean_diff, yend = mean_diff)) +
+  geom_segment(aes(x = mean_log_p, xend = mean_log_p, y = min_diff, yend = max_diff)) +
+  geom_point(size = 2) +
+  geom_label_repel(aes(label = dataset_name), 
+                   box.padding = 0.5, 
+                   point.padding = 0.5, 
+                   force = 2,
+                   show.legend = FALSE) +
+  scale_x_continuous(
+    "<- highly significant -- log10(p-value with 95% CI) -- not significant ->",
+    breaks = seq(-20, 0, by = 5),
+    labels = function(x) paste0("10^", x)
+  ) +
+  scale_y_continuous(
+    "Mean MSE Difference with 95% CI:\nproposed_fuser(all) - cv_glmnet(all)"
+  ) +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  ) +
+  labs(title = "Is proposed_fuser beneficial compared to cv_glmnet \nwhen both use all subsets?") +
+  annotate("text", x = -15, y = max(final_results$max_diff) + 0.05, 
+           label = "fuser worse", color = "darkred") +
+  annotate("text", x = -15, y = min(final_results$min_diff) - 0.01, 
+           label = "fuser better", color = "darkgreen") +
+  annotate("text", x = -4, y = min(final_results$min_diff) - 0.02, 
+           label = "p < 0.05", hjust = 0, vjust = 1, color = "gray40")
+
+print(gg)
+# Save the plot
+ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetall_16_05.png", gg, width = 7, height = 5, dpi = 500)
+```
 
 
+```{r}
+# Define datasets to analyze - mapping friendly names to CSV filenames
+datasets <- list("necromass" = "necromass_16_05.score.tall.csv",
+                "TwinsUK" = "TwinsUK_16_05.score.tall.csv",
+                "qa10394" = "qa10394_16_05.score.tall.csv",
+                "MovingPictures" = "MovingPictures_16_05.score.tall.csv",
+                "HMPv13" = "HMPv13_16_05.score.tall.csv",
+                "HMPv35" = "HMPv35_16_05.score.tall.csv")
+
+# Initialize empty data.table for results
+final_results <- data.table()
+
+# Process each dataset
+for (dataset_name in names(datasets)) {
+  csv_file <- datasets[[dataset_name]]
+  score.tall <- fread(paste0("/projects/genomic-ml/da2343/necromass/", csv_file))
+  summary(score.tall$log_regr.mse)
+  
+  # Extract MSE values for cv_glmnet algorithm with 'same' training subsets
+  glmnet_same_values <- score.tall[train.subsets == "same" & algorithm == "cv_glmnet", 
+                            .(test.fold, test.subset, task_id, glmnet_same = regr.mse)]
+  
+  # Extract MSE values for fuser algorithm with 'all' training subsets
+  fuser_all_values <- score.tall[train.subsets == "all" & algorithm == "fuser", 
+                           .(test.fold, test.subset, task_id, fuser_all = regr.mse)]
+  
+  # Merge fuser and glmnet results
+  all_values <- merge(fuser_all_values, glmnet_same_values, 
+                     by = c("test.fold", "test.subset", "task_id"),
+                     all = TRUE)
+  
+  # Calculate difference between fuser and glmnet MSE
+  all_values[, diff_fuser_glmnet := fuser_all - glmnet_same]
+  
+  # Calculate statistics for each fold
+  fold_stats <- all_values[, .(
+    mean_diff = mean(diff_fuser_glmnet, na.rm = TRUE),
+    p_value = t.test(fuser_all, glmnet_same, paired = TRUE)$p.value
+  ), by = .(test.fold)]
+  
+  n_folds <- nrow(fold_stats)  # number of folds for SE calculation
+  dataset_stats <- data.table(
+    dataset_name = dataset_name,
+    mean_diff =  mean(fold_stats$mean_diff),
+    min_diff = quantile(fold_stats$mean_diff, 0.025),  
+    max_diff = quantile(fold_stats$mean_diff, 0.975), 
+    
+    mean_p_value =  mean(fold_stats$p_value),
+    min_p_value = quantile(fold_stats$p_value, 0.025),  
+    max_p_value = quantile(fold_stats$p_value, 0.975)
+  )
+  
+  # Add results to final_results data.table
+  final_results <- rbind(final_results, dataset_stats, fill = TRUE)
+}
+
+final_results
+# Transform p-values to log scale first
+final_results[, `:=`(
+  mean_log_p = log10(mean_p_value),
+  min_log_p = log10(min_p_value),
+  max_log_p = log10(max_p_value)
+)]
+
+gg <- ggplot(final_results, aes(x = mean_log_p, y = mean_diff, color = dataset_name)) +
+  geom_vline(xintercept = log10(0.05), linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_segment(aes(x = min_log_p, xend = max_log_p, y = mean_diff, yend = mean_diff)) +
+  geom_segment(aes(x = mean_log_p, xend = mean_log_p, y = min_diff, yend = max_diff)) +
+  geom_point(size = 2) +
+  geom_label_repel(aes(label = dataset_name), 
+                   box.padding = 0.5, 
+                   point.padding = 0.5, 
+                   force = 2,
+                   show.legend = FALSE) +
+  scale_x_continuous(
+    "<- highly significant -- log10(p-value with 95% CI) -- not significant ->",
+    breaks = seq(-20, 0, by = 5),
+    labels = function(x) paste0("10^", x)
+  ) +
+  scale_y_continuous(
+    "Mean MSE Difference with 95% CI:\nproposed_fuser(all) - cv_glmnet(same)"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    plot.title = element_text(hjust = 0.5, size = 16)
+  ) +
+  labs(title = "Is it beneficial to combine subsets?") +
+  annotate("text", x = -15, y = max(final_results$max_diff) + 0.05, 
+           label = "fuser worse", color = "darkred") +
+  annotate("text", x = -15, y = min(final_results$min_diff) - 0.01, 
+           label = "fuser better", color = "darkgreen") +
+  annotate("text", x = -4, y = min(final_results$min_diff) - 0.02, 
+           label = "p < 0.05", hjust = 0, vjust = 1, color = "gray40")
+
+print(gg)
+# Save the plot
+ggsave("mse_diff_vs_pvalue_for_fuserall_glmnetsame_16_05.png", gg, width = 7, height = 5, dpi = 500)
 ```
